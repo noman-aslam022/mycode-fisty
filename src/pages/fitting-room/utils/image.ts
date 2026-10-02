@@ -27,33 +27,34 @@ export async function fetchImageAsDataUrl(url: string): Promise<string> {
   return blobToDataUrl(blob);
 }
 
-// Read an uploaded photo and downscale it so the try-on payload stays light.
-export function fileToDownscaledDataUrl(file: File, maxEdge = 1024): Promise<string> {
-  return new Promise((resolve, reject) => {
+/**
+ * Reads an image file and returns a downscaled data URL so large camera photos
+ * stay light enough to render smoothly in the studio.
+ */
+export const fileToDownscaledDataUrl = (file: File, maxSize = 1280): Promise<string> =>
+  new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onerror = () => reject(new Error("Could not read that file."));
+    reader.onerror = () => reject(new Error("Could not read that image."));
     reader.onload = () => {
-      const dataUrl = reader.result as string;
+      const src = String(reader.result);
       const img = new Image();
-      img.onerror = () => reject(new Error("That image could not be loaded."));
+      img.onerror = () => reject(new Error("Could not load that image."));
       img.onload = () => {
-        const { width, height } = img;
-        const scale = Math.min(1, maxEdge / Math.max(width, height));
-        const targetW = Math.max(1, Math.round(width * scale));
-        const targetH = Math.max(1, Math.round(height * scale));
+        const scale = Math.min(1, maxSize / Math.max(img.width, img.height));
+        const width = Math.round(img.width * scale);
+        const height = Math.round(img.height * scale);
         const canvas = document.createElement("canvas");
-        canvas.width = targetW;
-        canvas.height = targetH;
+        canvas.width = width;
+        canvas.height = height;
         const ctx = canvas.getContext("2d");
         if (!ctx) {
-          resolve(dataUrl);
+          resolve(src);
           return;
         }
-        ctx.drawImage(img, 0, 0, targetW, targetH);
+        ctx.drawImage(img, 0, 0, width, height);
         resolve(canvas.toDataURL("image/jpeg", 0.9));
       };
-      img.src = dataUrl;
+      img.src = src;
     };
     reader.readAsDataURL(file);
   });
-}

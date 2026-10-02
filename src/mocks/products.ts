@@ -1,19 +1,30 @@
+export type ProductSlot = "top" | "bottom" | "layer" | "accessory";
+
+export type ProductAudience = "men" | "women" | "unisex";
+
+export type ProductAgeGroup = "kids" | "adults" | "seniors" | "all";
+
 export interface Product {
   id: string;
   name: string;
   price: number;
   compareAt?: number;
   category: string;
-  // Which group this piece fills in the fitting room.
-  slot: "top" | "bottom" | "layer" | "accessory";
+  // Which group this piece fills in the fitting room. Derived from the
+  // category preset the owner picked, so the two can never disagree.
+  slot: ProductSlot;
   tags: string[];
   colors: string[];
   rating: number;
   reviews: number;
   badge?: string;
   // Which shopper group this piece is aimed at. Defaults to unisex.
-  audience?: "men" | "women" | "unisex";
-  ageGroup?: "kids" | "adults" | "seniors" | "all";
+  audience?: ProductAudience;
+  // Every generation this piece is aimed at. Empty array (or omitted) means
+  // "all generations".
+  ageGroups?: ProductAgeGroup[];
+  // Legacy single-generation field, kept so older saved records still resolve.
+  ageGroup?: ProductAgeGroup;
   image: string;
   // --- User-managed catalog extras (built-in pieces omit these) ---
   source?: "builtin" | "user";

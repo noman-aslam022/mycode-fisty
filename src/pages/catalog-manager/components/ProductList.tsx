@@ -1,5 +1,19 @@
-import type { Product } from "@/mocks/products";
+import type { Product, ProductAgeGroup } from "@/mocks/products";
 import { categoryIcon } from "@/pages/fitting-room/utils/outfit";
+import { ageStagesOf, railFor } from "@/pages/fitting-room/utils/wardrobe";
+
+const GENERATION_LABELS: Record<ProductAgeGroup, string> = {
+  all: "All ages",
+  kids: "Kids",
+  adults: "Adults",
+  seniors: "50+",
+};
+
+const GENDER_LABELS: Record<"men" | "women" | "unisex", string> = {
+  men: "Men",
+  women: "Women",
+  unisex: "Unisex",
+};
 
 interface ProductListProps {
   products: Product[];
@@ -111,6 +125,31 @@ export default function ProductList({
                   ></span>
                 ))}
               </div>
+            </div>
+            <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-background-100 text-foreground-700 text-[10px] font-label uppercase tracking-[0.1em]">
+                <i className="ri-hanger-line"></i> {railFor(product)}
+              </span>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-secondary-100 text-secondary-900 text-[10px] font-label uppercase tracking-[0.1em]">
+                <i
+                  className={
+                    product.audience === "men"
+                      ? "ri-men-line"
+                      : product.audience === "women"
+                        ? "ri-women-line"
+                        : "ri-sparkling-line"
+                  }
+                ></i>{" "}
+                {GENDER_LABELS[product.audience ?? "unisex"]}
+              </span>
+              {ageStagesOf(product).map((stage) => (
+                <span
+                  key={stage}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-100 text-accent-900 text-[10px] font-label uppercase tracking-[0.1em]"
+                >
+                  <i className="ri-user-line"></i> {GENERATION_LABELS[stage]}
+                </span>
+              ))}
             </div>
             <div className="mt-3 flex items-center gap-2">
               <button

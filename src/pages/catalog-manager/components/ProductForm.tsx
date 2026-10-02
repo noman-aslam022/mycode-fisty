@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
-import type { Product } from "@/mocks/products";
+import type { Product, ProductAgeGroup, ProductAudience } from "@/mocks/products";
 import { fileToDownscaledDataUrl, fetchImageAsDataUrl, MAX_UPLOAD_BYTES } from "@/pages/fitting-room/utils/image";
 import { buildGarmentReference } from "@/pages/fitting-room/utils/garmentExtract";
 import { makeProductId } from "@/pages/fitting-room/utils/catalogStore";
-import { CATEGORY_DEFS, colorName } from "@/pages/fitting-room/utils/outfit";
+import { CATEGORY_DEFS, SLOT_META, colorName } from "@/pages/fitting-room/utils/outfit";
 import type { OutfitSlot } from "@/pages/fitting-room/types";
 
 interface ProductFormProps {
@@ -23,17 +23,37 @@ const PALETTE = [
   "#c9a227",
 ];
 
+interface Choice {
+  value: string;
+  label: string;
+  hint: string;
+  icon: string;
+}
+
+const GENDER_OPTIONS: (Choice & { value: ProductAudience })[] = [
+  { value: "unisex", label: "All / Unisex", hint: "Every rack", icon: "ri-sparkling-line" },
+  { value: "women", label: "Women", hint: "Women's racks", icon: "ri-women-line" },
+  { value: "men", label: "Men", hint: "Men's racks", icon: "ri-men-line" },
+];
+
+const GENERATION_OPTIONS: (Choice & { value: Exclude<ProductAgeGroup, "all"> })[] = [
+  { value: "kids", label: "Kids & Youth", hint: "Ages 4–15", icon: "ri-baby-line" },
+  { value: "adults", label: "Adults & Teens", hint: "Ages 16–50", icon: "ri-user-line" },
+  { value: "seniors", label: "Classic & Mature", hint: "Ages 50+", icon: "ri-crown-line" },
+];
+
 export default function ProductForm({ editing, onSave, onCancel }: ProductFormProps) {
   const [name, setName] = useState("");
   const [price, setPrice] = useState("");
   const [categoryKey, setCategoryKey] = useState<string>(CATEGORY_DEFS[0].label);
-  const [slot, setSlot] = useState<OutfitSlot>("top");
-  const [audience, setAudience] = useState<"men" | "women" | "unisex">("unisex");
-  const [ageGroup, setAgeGroup] = useState<"kids" | "adults" | "seniors" | "all">("all");
+  const [audience, setAudience] = useState<ProductAudience>("unisex");
+  const [ageGroups, setAgeGroups] = useState<ProductAgeGroup[]>([]);
   const [colors, setColors] = useState<string[]>([PALETTE[0]]);
 
   const currentCategory =
     CATEGORY_DEFS.find((c) => c.label === categoryKey) ?? CATEGORY_DEFS[0];
+  // The category preset IS the fitting slot — they can never disagree.
+  const slot: OutfitSlot = currentCategory.slot;
   const [photo, setPhoto] = useState("");
   const [garmentRef, setGarmentRef] = useState("");
   const [detected, setDetected] = useState<boolean | null>(null);
@@ -59,9 +79,14 @@ export default function ProductForm({ editing, onSave, onCancel }: ProductFormPr
           (c) => c.label.toLowerCase() === (editing.category || "").toLowerCase()
         ) ?? CATEGORY_DEFS.find((c) => c.slot === editing.slot);
       setCategoryKey(matched?.label ?? CATEGORY_DEFS[0].label);
-      setSlot(editing.slot ?? matched?.slot ?? "top");
       setAudience(editing.audience ?? "unisex");
-      setAgeGroup(editing.ageGroup ?? "all");
+      setAgeGroups(
+        editing.ageGroups?.length
+          ? editing.ageGroups
+          : editing.ageGroup
+            ? [editing.ageGroup]
+            : []
+      );
       setColors(editing.colors.length ? editing.colors : [PALETTE[0]]);
       setPhoto(editing.image);
       setGarmentRef(editing.garmentRef ?? editing.image);
@@ -71,9 +96,8 @@ export default function ProductForm({ editing, onSave, onCancel }: ProductFormPr
       setName("");
       setPrice("");
       setCategoryKey(CATEGORY_DEFS[0].label);
-      setSlot(CATEGORY_DEFS[0].slot);
       setAudience("unisex");
-      setAgeGroup("all");
+      setAgeGroups([]);
       setColors([PALETTE[0]]);
       setPhoto("");
       setGarmentRef("");
@@ -174,6 +198,12 @@ export default function ProductForm({ editing, onSave, onCancel }: ProductFormPr
     });
   };
 
+  const toggleAgeGroup = (value: Exclude<ProductAgeGroup, "all">) => {
+    setAgeGroups((prev) =>
+      prev.includes(value) ? prev.filter((stage) => stage !== value) : [...prev, value]
+    );
+  };
+
   const handleSubmit = async () => {
     setError("");
     if (!name.trim()) {
@@ -206,7 +236,7 @@ export default function ProductForm({ editing, onSave, onCancel }: ProductFormPr
       reviews: editing?.reviews ?? 0,
       badge: editing?.badge,
       audience,
-      ageGroup,
+      ageGroups,
       image: photo,
       source: "user",
       onModel: effectiveOnModel,
@@ -446,70 +476,20 @@ export default function ProductForm({ editing, onSave, onCancel }: ProductFormPr
         </div>
       </div>
 
-      {/* Placement Slot & Audience Controls */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
-        <div>
-          <label className="font-label text-[11px] uppercase tracking-[0.16em] text-foreground-500 block mb-1">
-            Fitting Slot (Where it hangs)
-          </label>
-          <div className="relative">
-            <select
-              value={slot}
-              onChange={(e) => setSlot(e.target.value as OutfitSlot)}
-              className="w-full h-11 pl-3 pr-8 rounded-xl bg-background-100 border border-background-200 text-sm font-medium text-foreground-900 focus:outline-none focus:ring-2 focus:ring-primary-300 appearance-none cursor-pointer"
-            >
-              <option value="top">👕 Top (Torso)</option>
-              <option value="bottom">👖 Bottom (Waist / Legs)</option>
-              <option value="layer">🧥 Outerwear / Layer (Jackets)</option>
-              <option value="accessory">💎 Accessory (Bags, Hats, etc.)</option>
-            </select>
-            <i className="ri-arrow-down-s-line absolute right-3 top-1/2 -translate-y-1/2 text-foreground-500 pointer-events-none text-lg"></i>
-          </div>
-        </div>
-
-        <div>
-          <label className="font-label text-[11px] uppercase tracking-[0.16em] text-foreground-500 block mb-1">
-            Target Gender
-          </label>
-          <div className="relative">
-            <select
-              value={audience}
-              onChange={(e) => setAudience(e.target.value as "men" | "women" | "unisex")}
-              className="w-full h-11 pl-3 pr-8 rounded-xl bg-background-100 border border-background-200 text-sm font-medium text-foreground-900 focus:outline-none focus:ring-2 focus:ring-primary-300 appearance-none cursor-pointer"
-            >
-              <option value="unisex">✨ All / Unisex</option>
-              <option value="women">👩 Women</option>
-              <option value="men">👨 Men</option>
-            </select>
-            <i className="ri-arrow-down-s-line absolute right-3 top-1/2 -translate-y-1/2 text-foreground-500 pointer-events-none text-lg"></i>
-          </div>
-        </div>
-
-        <div>
-          <label className="font-label text-[11px] uppercase tracking-[0.16em] text-foreground-500 block mb-1">
-            Generation / Stage
-          </label>
-          <div className="relative">
-            <select
-              value={ageGroup}
-              onChange={(e) => setAgeGroup(e.target.value as "kids" | "adults" | "seniors" | "all")}
-              className="w-full h-11 pl-3 pr-8 rounded-xl bg-background-100 border border-background-200 text-sm font-medium text-foreground-900 focus:outline-none focus:ring-2 focus:ring-primary-300 appearance-none cursor-pointer"
-            >
-              <option value="all">🌟 All Generations</option>
-              <option value="kids">🧒 Kids &amp; Youth (4–15)</option>
-              <option value="adults">🧑 Adults &amp; Teens (16–50)</option>
-              <option value="seniors">👑 Classic &amp; Mature (50+)</option>
-            </select>
-            <i className="ri-arrow-down-s-line absolute right-3 top-1/2 -translate-y-1/2 text-foreground-500 pointer-events-none text-lg"></i>
-          </div>
-        </div>
-      </div>
-
-      {/* Category */}
+      {/* Category Preset — this is also what decides the fitting slot */}
       <div className="mb-5">
-        <label className="font-label text-[11px] uppercase tracking-[0.16em] text-foreground-500">
-          Category Preset
-        </label>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <label className="font-label text-[11px] uppercase tracking-[0.16em] text-foreground-500">
+            Category Preset
+          </label>
+          <span className="inline-flex items-center gap-1.5 text-[11px] text-foreground-500">
+            <i className="ri-hanger-line"></i>
+            Hangs on
+            <span className="font-semibold text-foreground-800">
+              {SLOT_META[currentCategory.slot].label}
+            </span>
+          </span>
+        </div>
         <div className="mt-2 grid grid-cols-2 sm:grid-cols-3 gap-2">
           {CATEGORY_DEFS.map((c) => {
             const active = categoryKey === c.label;
@@ -517,10 +497,8 @@ export default function ProductForm({ editing, onSave, onCancel }: ProductFormPr
               <button
                 key={c.label}
                 type="button"
-                onClick={() => {
-                  setCategoryKey(c.label);
-                  setSlot(c.slot);
-                }}
+                aria-pressed={active}
+                onClick={() => setCategoryKey(c.label)}
                 className={`text-left rounded-xl border p-3 transition-colors cursor-pointer ${
                   active
                     ? "border-primary-500 bg-primary-100/50"
@@ -530,6 +508,136 @@ export default function ProductForm({ editing, onSave, onCancel }: ProductFormPr
                 <i className={`${c.icon} text-lg ${active ? "text-primary-700" : "text-foreground-600"}`}></i>
                 <p className="mt-1.5 font-heading font-bold text-sm text-foreground-950">{c.label}</p>
                 <p className="text-[11px] text-foreground-500 leading-tight">{c.hint}</p>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Target Gender — checkbox style */}
+      <div className="mb-5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <label className="font-label text-[11px] uppercase tracking-[0.16em] text-foreground-500">
+            Target Gender
+          </label>
+          <span className="text-[11px] text-foreground-500">
+            Who sees this piece on their racks
+          </span>
+        </div>
+        <div className="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-2">
+          {GENDER_OPTIONS.map((option) => {
+            const active = audience === option.value;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                role="checkbox"
+                aria-checked={active}
+                onClick={() => setAudience(option.value)}
+                className={`flex items-center gap-2.5 text-left rounded-xl border p-3 transition-colors cursor-pointer ${
+                  active
+                    ? "border-primary-500 bg-primary-100/50"
+                    : "border-background-200 bg-background-100 hover:border-foreground-300"
+                }`}
+              >
+                <span
+                  className={`w-5 h-5 shrink-0 rounded-md border flex items-center justify-center transition-colors ${
+                    active
+                      ? "bg-primary-500 border-primary-500 text-foreground-950"
+                      : "bg-background-50 border-background-300 text-transparent"
+                  }`}
+                >
+                  <i className="ri-check-line text-sm"></i>
+                </span>
+                <span className="min-w-0">
+                  <span className="flex items-center gap-1.5">
+                    <i
+                      className={`${option.icon} text-base ${
+                        active ? "text-primary-700" : "text-foreground-600"
+                      }`}
+                    ></i>
+                    <span className="font-heading font-bold text-sm text-foreground-950">
+                      {option.label}
+                    </span>
+                  </span>
+                  <span className="block text-[11px] text-foreground-500 leading-tight mt-0.5">
+                    {option.hint}
+                  </span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Generation / Stage — same card grid as the category preset */}
+      <div className="mb-5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <label className="font-label text-[11px] uppercase tracking-[0.16em] text-foreground-500">
+            Generation / Stage
+          </label>
+          <span className="text-[11px] text-foreground-500">
+            {ageGroups.length === 0
+              ? "Showing on every age rack"
+              : `${ageGroups.length} selected`}
+          </span>
+        </div>
+        <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <button
+            type="button"
+            aria-pressed={ageGroups.length === 0}
+            onClick={() => setAgeGroups([])}
+            className={`text-left rounded-xl border p-3 transition-colors cursor-pointer ${
+              ageGroups.length === 0
+                ? "border-primary-500 bg-primary-100/50"
+                : "border-background-200 bg-background-100 hover:border-foreground-300"
+            }`}
+          >
+            <i
+              className={`ri-sparkling-line text-lg ${
+                ageGroups.length === 0 ? "text-primary-700" : "text-foreground-600"
+              }`}
+            ></i>
+            <p className="mt-1.5 font-heading font-bold text-sm text-foreground-950">
+              All Generations
+            </p>
+            <p className="text-[11px] text-foreground-500 leading-tight">No age filtering</p>
+          </button>
+
+          {GENERATION_OPTIONS.map((option) => {
+            const active = ageGroups.includes(option.value);
+            return (
+              <button
+                key={option.value}
+                type="button"
+                aria-pressed={active}
+                onClick={() => toggleAgeGroup(option.value)}
+                className={`text-left rounded-xl border p-3 transition-colors cursor-pointer ${
+                  active
+                    ? "border-primary-500 bg-primary-100/50"
+                    : "border-background-200 bg-background-100 hover:border-foreground-300"
+                }`}
+              >
+                <span className="flex items-center justify-between gap-2">
+                  <i
+                    className={`${option.icon} text-lg ${
+                      active ? "text-primary-700" : "text-foreground-600"
+                    }`}
+                  ></i>
+                  <span
+                    className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${
+                      active
+                        ? "bg-primary-500 border-primary-500 text-foreground-950"
+                        : "bg-background-50 border-background-300 text-transparent"
+                    }`}
+                  >
+                    <i className="ri-check-line text-[11px]"></i>
+                  </span>
+                </span>
+                <p className="mt-1.5 font-heading font-bold text-sm text-foreground-950">
+                  {option.label}
+                </p>
+                <p className="text-[11px] text-foreground-500 leading-tight">{option.hint}</p>
               </button>
             );
           })}

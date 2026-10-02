@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { products as builtinProducts, type Product } from "@/mocks/products";
+import type { Product } from "@/mocks/products";
 
 /**
  * Local catalog store.
@@ -82,8 +82,25 @@ export function makeProductId(): string {
   return `u-${Date.now()}-${Math.round(Math.random() * 1e6)}`;
 }
 
+/**
+ * One catalog, many screens.
+ *
+ * The racks in the studio, the floating rail and the manager all read the same
+ * store, so a piece saved in one place has to appear in the others without a
+ * manual reload. A refresh never announces itself — only a write does — so
+ * subscribers can't bounce notifications back and forth.
+ */
+type CatalogListener = () => void;
+const listeners = new Set<CatalogListener>();
+
+function announceChange() {
+  listeners.forEach((listener) => {
+    void listener();
+  });
+}
+
 export interface CatalogApi {
-  // Built-in pieces + the owner's uploaded pieces, ready for the racks.
+  // Only the owner's uploaded pieces, ready for the racks.
   catalog: Product[];
   userProducts: Product[];
   loading: boolean;
@@ -115,6 +132,16 @@ export function useCatalog(): CatalogApi {
     void refresh();
   }, [refresh]);
 
+  useEffect(() => {
+    const listener = () => {
+      void refresh();
+    };
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+    };
+  }, [refresh]);
+
   const addProduct = useCallback(
     async (product: Product) => {
       await saveUserProduct({
@@ -122,6 +149,7 @@ export function useCatalog(): CatalogApi {
         source: "user",
         createdAt: product.createdAt ?? Date.now(),
       });
+      announceChange();
       await refresh();
     },
     [refresh]
@@ -130,12 +158,15 @@ export function useCatalog(): CatalogApi {
   const removeProduct = useCallback(
     async (id: string) => {
       await deleteUserProduct(id);
+      announceChange();
       await refresh();
     },
     [refresh]
   );
 
-  const catalog = useMemo(() => [...userProducts, ...builtinProducts], [userProducts]);
+  // Dummy/builtin mock products are intentionally excluded — the wardrobe
+  // only ever shows what the owner has actually added to their catalog.
+  const catalog = useMemo(() => [...userProducts], [userProducts]);
 
   return { catalog, userProducts, loading, error, refresh, addProduct, removeProduct };
 }

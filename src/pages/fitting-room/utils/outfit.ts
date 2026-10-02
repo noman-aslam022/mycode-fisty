@@ -1,5 +1,6 @@
 import type { Product } from "@/mocks/products";
 import type { OutfitEntry, OutfitSlot } from "../types";
+import { accessoryKind } from "./masking";
 
 export const SLOT_ORDER: OutfitSlot[] = ["top", "bottom", "layer", "accessory"];
 
@@ -143,6 +144,24 @@ const SLOT_DIRECTION: Record<OutfitSlot, string> = {
   accessory: "place the provided accessory naturally in its correct location on the person",
 };
 
+// Accessories all share one slot, so each kind needs its own placement words or
+// the engine is free to hang a pair of sneakers off the shoulder.
+const ACCESSORY_DIRECTION: Record<string, string> = {
+  footwear: "put this shoe on the person's foot, aligned to the ankle and the ground",
+  glasses: "put these glasses on the person's face, aligned to the eyes",
+  hat: "put this hat on the person's head, sitting on the hair",
+  necklace: "put this necklace around the person's neck",
+  bag: "put this bag on the person's shoulder or hip as it naturally hangs",
+  wrist: "put this item on the person's wrist",
+  generic: "place this accessory on the person where it is normally worn",
+};
+
+const pieceDirection = (entry: OutfitEntry): string => {
+  const dir = SLOT_DIRECTION[entry.slot];
+  if (entry.slot !== "accessory") return dir;
+  return ACCESSORY_DIRECTION[accessoryKind(entry)] ?? ACCESSORY_DIRECTION.generic;
+};
+
 // Precise styling instruction for the try-on engine:
 // swap garments/accessories while locking the person's exact face, skin tone,
 // hair, body shape, posture and appearance unchanged.
@@ -151,12 +170,12 @@ export function batchInstruction(entries: OutfitEntry[]): string {
   const hasTop = sorted.some((entry) => entry.slot === "top");
   const hasLayer = sorted.some((entry) => entry.slot === "layer");
 
-  const parts = sorted.map((entry) => {
-    const dir = SLOT_DIRECTION[entry.slot];
-    if (entry.kind === "catalog") {
-      return `${dir} in ${colorName(entry.color)} colour`;
-    }
-    return dir;
+  // Each piece is pinned to its position in the reference image list, otherwise
+  // two accessories in one batch receive the same direction and get swapped.
+  const parts = sorted.map((entry, index) => {
+    const dir = pieceDirection(entry);
+    const colour = entry.kind === "catalog" ? ` in ${colorName(entry.color)} colour` : "";
+    return `reference image ${index + 1} ("${entryName(entry)}"): ${dir}${colour}`;
   });
 
   // A zip jacket worn with no chosen inner top keeps whatever top the person is

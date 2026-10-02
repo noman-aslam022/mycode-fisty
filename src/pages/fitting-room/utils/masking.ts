@@ -226,7 +226,7 @@ function headGeometry(lm2: Landmark[], w: number, h: number): HeadGeom {
   return { cx, headW, eyeY, topY, chinY };
 }
 
-function accessoryKind(entry: OutfitEntry): string {
+export function accessoryKind(entry: OutfitEntry): string {
   const name = (entry.kind === "catalog" ? entry.product.name : entry.garment.name).toLowerCase();
   const tags = entry.kind === "catalog" ? entry.product.tags.join(" ").toLowerCase() : "";
   const desc = `${name} ${tags}`;
