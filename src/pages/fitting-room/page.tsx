@@ -3,7 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import Navbar from "@/components/feature/Navbar";
 import Footer from "@/components/feature/Footer";
 import { products, type Product } from "@/mocks/products";
-import { supabase } from "@/lib/supabase";
+import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 import { fileToDownscaledDataUrl, MAX_UPLOAD_BYTES } from "./utils/image";
 import {
   batchInstruction,
@@ -179,6 +179,13 @@ export default function FittingRoom() {
     if (!photo) {
       setNeedPhoto(true);
       setError("Upload your photo first — then fit your whole look.");
+      return;
+    }
+    if (!isSupabaseConfigured) {
+      setError(
+        "Try-on isn't connected. Configure VITE_PUBLIC_SUPABASE_URL and VITE_PUBLIC_SUPABASE_ANON_KEY, deploy the bria-tryon function, and set BRIA_API_KEY in Supabase."
+      );
+      setStatus("error");
       return;
     }
 
