@@ -1,13 +1,21 @@
 import { useState } from "react";
-import type { ImportedGarment, OutfitEntry } from "../types";
-import { colorName, entryName, entrySubtitle, entrySource, SLOT_META, sortLook } from "../utils/outfit";
+import type { ImportedGarment, OutfitEntry, OutfitSlot } from "../types";
+import {
+  categoryIcon,
+  colorName,
+  entryName,
+  entrySubtitle,
+  entrySource,
+  SLOT_META,
+  sortLook,
+} from "../utils/outfit";
 import GarmentImport from "./GarmentImport";
 
 interface OutfitTrayProps {
   look: OutfitEntry[];
   onRemove: (id: string) => void;
   onClearAll: () => void;
-  onImport: (garment: ImportedGarment) => void;
+  onImport: (garment: ImportedGarment, slot: OutfitSlot) => void;
   onFit: () => void;
   onShopLook: () => void;
   busy: boolean;
@@ -37,7 +45,10 @@ function Thumb({ src, alt }: { src: string; alt: string }) {
 }
 
 function PieceCard({ entry, onRemove }: { entry: OutfitEntry; onRemove: () => void }) {
-  const meta = SLOT_META[entry.slot];
+  const badgeLabel =
+    entry.kind === "catalog" ? entry.product.category : SLOT_META[entry.slot].short;
+  const badgeIcon =
+    entry.kind === "catalog" ? categoryIcon(entry.product.category) : SLOT_META[entry.slot].icon;
   return (
     <div className="group flex items-center gap-3 rounded-2xl border border-background-200 bg-background-50 p-3">
       <div className="w-14 h-16 rounded-xl overflow-hidden bg-background-100 shrink-0">
@@ -45,7 +56,7 @@ function PieceCard({ entry, onRemove }: { entry: OutfitEntry; onRemove: () => vo
       </div>
       <div className="min-w-0 flex-1">
         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-secondary-100 text-secondary-900 text-[10px] font-label uppercase tracking-[0.12em]">
-          <i className={meta.icon}></i> {meta.short}
+          <i className={badgeIcon}></i> {badgeLabel}
         </span>
         <p className="mt-1 font-heading font-bold text-sm text-foreground-950 truncate">
           {entryName(entry)}
@@ -102,8 +113,8 @@ export default function OutfitTray({
             Build the whole fit
           </h2>
           <p className="mt-3 text-sm md:text-base text-foreground-600 max-w-xl">
-            One top, one bottom and a layer over it — plus as many accessories as you want (glasses,
-            hats, jewellery, bags). Fit it all onto you in one go, then shop the look.
+            One top, one bottom and a layer over it — plus as many accessories as you want
+            (glasses, hats, jewellery, bags). Fit it all onto you in one go, then shop the look.
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -163,7 +174,7 @@ export default function OutfitTray({
             {count > 3 && hasPhoto && (
               <p className="mt-3 inline-flex items-center gap-1.5 text-xs text-background-200/70">
                 <i className="ri-loop-right-line text-primary-500"></i>
-                Fitted in {batches} passes (Bria fits 3 at a time, then layers the rest).
+                Fitted in {batches} passes (3 pieces at a time, then the rest are layered on).
               </p>
             )}
           </div>

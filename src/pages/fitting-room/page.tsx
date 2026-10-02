@@ -1,10 +1,11 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import Navbar from "@/components/feature/Navbar";
 import Footer from "@/components/feature/Footer";
-import { products, type Product } from "@/mocks/products";
+import type { Product } from "@/mocks/products";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
-import { fileToDownscaledDataUrl, MAX_UPLOAD_BYTES } from "./utils/image";
+import { useCatalog } from "./utils/catalogStore";
+import { fileToDownscaledDataUrl, fetchImageAsDataUrl, MAX_UPLOAD_BYTES } from "./utils/image";
 import {
   batchInstruction,
   batchLook,
@@ -17,10 +18,12 @@ import { bagCount, bagItemsFromLook, mergeBag } from "./utils/bag";
 import {
   analyzePersonPhoto,
   generateOutfitMask,
-  cleanUpTryOnResult,
+  compositeTryOnResult,
   type PoseReference,
 } from "./utils/masking";
-import type { BagItem, ImportedGarment, OutfitEntry, TryOnStatus } from "./types";
+import { extractGarmentReference } from "./utils/garmentExtract";
+import type { BagItem, ImportedGarment, OutfitEntry, OutfitSlot, ShopperProfile, TryOnStatus } from "./types";
+import ShopperOnboarding from "./components/ShopperOnboarding";
 import FittingHeader from "./components/FittingHeader";
 import PhotoPanel from "./components/PhotoPanel";
 import TryOnStage from "./components/TryOnStage";
@@ -37,15 +40,25 @@ const studioSteps = ["01 Upload", "02 Stage", "03 Look", "04 Shop"];
 export default function FittingRoom() {
   const [searchParams] = useSearchParams();
   const stageRef = useRef<HTMLDivElement>(null);
+  const { catalog } = useCatalog();
 
   const [photo, setPhoto] = useState<string | null>(null);
-  const [look, setLook] = useState<OutfitEntry[]>(() => {
-    // Deep link (?product=p-001) drops that piece straight into the look.
-    const id = searchParams.get("product");
-    const found = products.find((p) => p.id === id) ?? null;
-    return found ? [catalogEntry(found, found.colors[0])] : [];
-  });
-  // Per-product colour pick, keyed by product id (falls back to first colour).
+  const [look, setLook] = useState<OutfitEntry[]>([]);
+  const deepLinkId = searchParams.get("product");
+  const deepLinkApplied = useRef(false);
+
+  useEffect(() => {
+    if (!deepLinkId || deepLinkApplied.current) return;
+    const found = catalog.find((p) => p.id === deepLinkId);
+    if (!found) return;
+    deepLinkApplied.current = true;
+    setLook((prev) =>
+      prev.some((entry) => entry.kind === "catalog" && entry.product.id === found.id)
+        ? prev
+        : [...prev, catalogEntry(found, found.colors[0])]
+    );
+  }, [catalog, deepLinkId]);
+
   const [colors, setColors] = useState<Record<string, string>>({});
   const [status, setStatus] = useState<TryOnStatus>("idle");
   const [resultUrl, setResultUrl] = useState<string | null>(null);
@@ -56,6 +69,15 @@ export default function FittingRoom() {
   const [toast, setToast] = useState("");
   const [bag, setBag] = useState<BagItem[]>([]);
   const [bagOpen, setBagOpen] = useState(false);
+  const [shopperProfile, setShopperProfile] = useState<ShopperProfile | null>(() => {
+    try {
+      const stored = localStorage.getItem("vestra_shopper_profile");
+      return stored ? JSON.parse(stored) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [isConfiguringProfile, setIsConfiguringProfile] = useState(false);
 
   const colorOf = useCallback(
     (product: Product) => colors[product.id] ?? product.colors[0],
@@ -66,8 +88,15 @@ export default function FittingRoom() {
     () =>
       look
         .filter(
-          (entry): entry is { kind: "catalog"; id: string; slot: Product["slot"]; product: Product; color: string } =>
-            entry.kind === "catalog"
+          (
+            entry
+          ): entry is {
+            kind: "catalog";
+            id: string;
+            slot: Product["slot"];
+            product: Product;
+            color: string;
+          } => entry.kind === "catalog"
         )
         .map((entry) => entry.product.id),
     [look]
@@ -96,12 +125,12 @@ export default function FittingRoom() {
       setNeedPhoto(false);
       setResultUrl(null);
       setStatus("idle");
-      // Analyze geometry and store pose reference to lock face, posture and body
+      // Analyze geometry and store the pose reference to lock face, posture and body.
       try {
         const pose = await analyzePersonPhoto(dataUrl);
         setPoseRef(pose);
       } catch {
-        // Fallback gracefully
+        setPoseRef(null);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load that image.");
@@ -124,20 +153,26 @@ export default function FittingRoom() {
 
     if (exists) {
       setLook((prev) =>
-        prev.filter((entry) => !(entry.kind === "catalog" && entry.product.id === product.id))
+        prev.filter(
+          (entry) => !(entry.kind === "catalog" && entry.product.id === product.id)
+        )
       );
       return;
     }
 
     // Top / Bottom / Layer hold one piece — adding a new one swaps the old out.
     if (isSingleSlot(product.slot)) {
-      const hadOne = look.some((entry) => entry.slot === product.slot && entry.kind === "catalog");
+      const hadOne = look.some(
+        (entry) => entry.slot === product.slot && entry.kind === "catalog"
+      );
       setLook((prev) => [
         ...prev.filter((entry) => entry.slot !== product.slot),
         catalogEntry(product, color),
       ]);
       if (hadOne) {
-        showToast(`Swapped your ${SLOT_META[product.slot].short.toLowerCase()} for ${product.name}`);
+        showToast(
+          `Swapped your ${SLOT_META[product.slot].short.toLowerCase()} for ${product.name}`
+        );
       }
       return;
     }
@@ -147,20 +182,40 @@ export default function FittingRoom() {
 
   const selectColor = (productId: string, hex: string) => {
     setColors((prev) => ({ ...prev, [productId]: hex }));
-    // Keep any already-picked piece in sync with its new colour.
     setLook((prev) =>
       prev.map((entry) =>
-        entry.kind === "catalog" && entry.product.id === productId ? { ...entry, color: hex } : entry
+        entry.kind === "catalog" && entry.product.id === productId
+          ? { ...entry, color: hex }
+          : entry
       )
     );
   };
 
-  const addImported = (garment: ImportedGarment) => {
+  const addImported = (garment: ImportedGarment, slot?: OutfitSlot) => {
+    const targetSlot = slot ?? garment.slot ?? "accessory";
+    if (isSingleSlot(targetSlot)) {
+      setLook((prev) => [
+        ...prev.filter((entry) => entry.slot !== targetSlot),
+        {
+          kind: "imported",
+          id: garment.id,
+          slot: targetSlot,
+          garment: { ...garment, slot: targetSlot },
+        },
+      ]);
+      showToast(`Added custom piece as ${SLOT_META[targetSlot].label}`);
+      return;
+    }
     setLook((prev) => [
       ...prev,
-      { kind: "imported", id: garment.id, slot: "accessory", garment },
+      {
+        kind: "imported",
+        id: garment.id,
+        slot: targetSlot,
+        garment: { ...garment, slot: targetSlot },
+      },
     ]);
-    showToast("Imported piece added to your look");
+    showToast(`Added custom piece as ${SLOT_META[targetSlot].label}`);
   };
 
   const removeEntry = (id: string) => {
@@ -183,7 +238,7 @@ export default function FittingRoom() {
     }
     if (!isSupabaseConfigured) {
       setError(
-        "Try-on isn't connected. Configure VITE_PUBLIC_SUPABASE_URL and VITE_PUBLIC_SUPABASE_ANON_KEY, deploy the bria-tryon function, and set BRIA_API_KEY in Supabase."
+        "Try-on isn't connected yet. Connect your backend, deploy the bria-tryon function, and set BRIA_API_KEY."
       );
       setStatus("error");
       return;
@@ -195,18 +250,19 @@ export default function FittingRoom() {
     setStatus("generating");
 
     const groups = batchLook(look);
-    const basePhoto = photo;
-    let personImage = photo;
-    let lastUrl = "";
+    // `composed` is the running result. Every batch is blended back onto it
+    // using only that batch's clothing region, so the person, face, pose and
+    // background stay anchored to the ORIGINAL photo at every step — even when
+    // several products are fitted one after another.
+    let composed = photo;
 
-    // Ensure we have analyzed the pose/geometry to protect face and body
     let currentPose = poseRef;
     if (!currentPose && photo) {
       try {
         currentPose = await analyzePersonPhoto(photo);
         setPoseRef(currentPose);
       } catch {
-        // Fallback
+        currentPose = null;
       }
     }
 
@@ -215,28 +271,38 @@ export default function FittingRoom() {
         const group = groups[i];
         setProgress(
           groups.length > 1
+            ? `Pass ${i + 1} of ${groups.length} — preparing ${group.length} ${
+                group.length === 1 ? "piece" : "pieces"
+              }…`
+            : "Preparing your pieces…"
+        );
+
+        // Extract a human-free garment reference for every piece first, so the
+        // try-on engine never copies a model's face or pose from the product
+        // photo — it only ever receives the garment itself. Once a user product
+        // was auto-tagged at upload, we reuse that clean cut-out directly.
+        const garmentImages = await Promise.all(
+          group.map((entry) => {
+            if (entry.kind === "catalog" && entry.product.garmentRef) {
+              return Promise.resolve(entry.product.garmentRef);
+            }
+            return extractGarmentReference(entrySource(entry), entry.slot, {
+              onModel: entry.kind === "catalog" ? entry.product.onModel : undefined,
+            });
+          })
+        );
+
+        setProgress(
+          groups.length > 1
             ? `Pass ${i + 1} of ${groups.length} — fitting ${group.length} ${
                 group.length === 1 ? "piece" : "pieces"
               }…`
-            : ""
+            : "Fitting your look…"
         );
-
-        // Generate dynamic mask for this outfit pass (clothing/accessory white, face/body black)
-        let maskImage: string | undefined = undefined;
-        if (currentPose) {
-          try {
-            maskImage = await generateOutfitMask(currentPose, group);
-          } catch {
-            // Fallback
-          }
-        }
-
-        const garmentImages = group.map(entrySource);
         const { data, error: fnError } = await supabase.functions.invoke("bria-tryon", {
           body: {
-            personImage,
+            personImage: composed,
             garmentImages,
-            maskImage,
             instruction: batchInstruction(group),
           },
         });
@@ -257,39 +323,69 @@ export default function FittingRoom() {
 
           if (errorMessage === "free_limit_reached") {
             throw new Error(
-              "Bria AI free quota reached ('free_limit_reached'). Your Bria API key in Supabase has exhausted its free credits. Please add credits or update your BRIA_API_KEY in Supabase secrets."
+              "The try-on service has reached its free quota. Please add credits or update the BRIA_API_KEY."
             );
           }
           throw new Error(errorMessage || "The try-on service failed.");
         }
-        const payload = data as { imageUrl?: string; error?: string } | null;
+        const payload = data as {
+          imageUrl?: string;
+          imageDataUrl?: string;
+          error?: string;
+        } | null;
         if (payload?.error) {
           if (payload.error === "free_limit_reached") {
             throw new Error(
-              "Bria AI free quota reached ('free_limit_reached'). Your Bria API key in Supabase has exhausted its free credits. Please add credits or update your BRIA_API_KEY in Supabase secrets."
+              "The try-on service has reached its free quota. Please add credits or update the BRIA_API_KEY."
             );
           }
           throw new Error(payload.error);
         }
-        if (!payload?.imageUrl) throw new Error("No image was returned. Please try again.");
 
-        let finalImageUrl = payload.imageUrl;
-        if (basePhoto) {
+        // Resolve the fitted image to an INLINE data URL before compositing.
+        // The blend below must read the image's pixels, and a cross-origin
+        // image the browser refuses to expose would make that blend fail and
+        // fall back to the raw AI frame — the exact frame where a model's face
+        // and pose can leak. Inline data always blends.
+        let generatedRef = payload?.imageDataUrl || "";
+        if (!generatedRef && payload?.imageUrl) {
           try {
-            // Clean up the image: preserves the user's authentic camera face/eyes
-            // while keeping the newly fitted clothing, shoes, and background clean with zero cutouts.
-            finalImageUrl = await cleanUpTryOnResult(basePhoto, payload.imageUrl, currentPose);
-          } catch (compErr) {
-            console.warn("Cleanup fallback:", compErr);
+            generatedRef = await fetchImageAsDataUrl(payload.imageUrl);
+          } catch (dlErr) {
+            console.warn("Direct download failed, trying backend proxy:", dlErr);
           }
         }
+        if (!generatedRef && payload?.imageUrl) {
+          try {
+            const { data: proxyData } = await supabase.functions.invoke("bria-tryon", {
+              body: { action: "download", url: payload.imageUrl },
+            });
+            generatedRef =
+              (proxyData as { imageDataUrl?: string } | null)?.imageDataUrl || "";
+          } catch (proxyErr) {
+            console.warn("Backend image proxy failed:", proxyErr);
+          }
+        }
+        if (!generatedRef) {
+          throw new Error("No image was returned. Please try again.");
+        }
 
-        lastUrl = finalImageUrl;
-        // Chain: layer the next batch onto this result.
-        personImage = finalImageUrl;
+        // Lock your face, pose and background: only the garment region of the
+        // AI frame is ever used. We refuse to show a raw AI frame, so if the
+        // mask cannot be built we stop rather than alter your appearance.
+        if (!currentPose) {
+          throw new Error(
+            "We could not read the body in your photo. Please upload a clear, full-body photo and try again."
+          );
+        }
+        const batchMask = await generateOutfitMask(currentPose, group);
+        if (!batchMask) {
+          throw new Error("We could not prepare the fit. Please try again.");
+        }
+        composed = await compositeTryOnResult(composed, generatedRef, batchMask);
       }
 
-      setResultUrl(lastUrl);
+      setResultUrl(composed);
       setStatus("done");
       setProgress("");
     } catch (e) {
@@ -297,7 +393,7 @@ export default function FittingRoom() {
       setError(e instanceof Error ? e.message : "Something went wrong. Please try again.");
       setStatus("error");
     }
-  }, [look, photo]);
+  }, [look, photo, poseRef]);
 
   const handleFit = () => {
     void renderLook();
@@ -311,9 +407,7 @@ export default function FittingRoom() {
     }
     setBag((prev) => mergeBag(prev, bagItemsFromLook(look)));
     setBagOpen(true);
-    showToast(
-      `${look.length} ${look.length === 1 ? "piece" : "pieces"} added to your bag`
-    );
+    showToast(`${look.length} ${look.length === 1 ? "piece" : "pieces"} added to your bag`);
   };
 
   const changeBagQty = (id: string, color: string | undefined, delta: number) => {
@@ -332,12 +426,37 @@ export default function FittingRoom() {
 
   const cartCount = bagCount(bag);
 
+  // If the user has not completed the onboarding questions (gender, age group), show onboarding first
+  if (!shopperProfile) {
+    return (
+      <div className="min-h-screen w-full bg-background-50 overflow-x-hidden">
+        <Navbar />
+        <main className="pt-28 md:pt-36 pb-16">
+          <ShopperOnboarding
+            onComplete={(p) => {
+              setShopperProfile(p);
+              try {
+                localStorage.setItem("vestra_shopper_profile", JSON.stringify(p));
+              } catch {
+                // ignore
+              }
+            }}
+          />
+        </main>
+        <Footer />
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen w-full bg-background-50 overflow-x-hidden">
       <Navbar />
 
       <main className="pt-28 md:pt-32">
-        <FittingHeader />
+        <FittingHeader
+          shopperProfile={shopperProfile}
+          onEditProfile={() => setIsConfiguringProfile(true)}
+        />
 
         {/* Studio console — photo + stage grouped into one dark booth */}
         <section className="w-full px-4 md:px-6 lg:px-10 pb-10 md:pb-14">
@@ -406,14 +525,35 @@ export default function FittingRoom() {
         />
 
         <CatalogGrid
+          products={catalog}
           lookIds={lookIds}
           colorOf={colorOf}
           onSelectColor={selectColor}
           onToggle={toggleCatalog}
           busy={status === "generating"}
           hasPhoto={Boolean(photo)}
+          shopperProfile={shopperProfile}
+          onEditProfile={() => setIsConfiguringProfile(true)}
         />
       </main>
+
+      {/* Edit Profile Modal */}
+      {isConfiguringProfile && (
+        <ShopperOnboarding
+          initialProfile={shopperProfile}
+          isModal
+          onComplete={(p) => {
+            setShopperProfile(p);
+            setIsConfiguringProfile(false);
+            try {
+              localStorage.setItem("vestra_shopper_profile", JSON.stringify(p));
+            } catch {
+              // ignore
+            }
+          }}
+          onCancel={() => setIsConfiguringProfile(false)}
+        />
+      )}
 
       <Footer />
 

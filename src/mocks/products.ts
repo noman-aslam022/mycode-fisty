@@ -13,7 +13,13 @@ export interface Product {
   badge?: string;
   // Which shopper group this piece is aimed at. Defaults to unisex.
   audience?: "men" | "women" | "unisex";
+  ageGroup?: "kids" | "adults" | "seniors" | "all";
   image: string;
+  // --- User-managed catalog extras (built-in pieces omit these) ---
+  source?: "builtin" | "user";
+  onModel?: boolean;
+  garmentRef?: string;
+  createdAt?: number;
 }
 
 export const products: Product[] = [
@@ -511,5 +517,163 @@ export const products: Product[] = [
     badge: "Best seller",
     image:
       "https://readdy.ai/api/search-image?query=Mens%20cream%20suede%20low-top%20sneakers%20on%20a%20minimal%20cream%20studio%20background%2C%20footwear%20editorial%20photography%2C%20soft%20studio%20lighting%2C%20soft%20suede%20texture%2C%20warm%20neutral%20tones%2C%20high%20detail&width=800&height=1000&seq=fitsy-men-sneakers-35&orientation=portrait",
+  },
+  {
+    id: "p-036",
+    name: "Kids Colorblock Sherpa Fleece Jacket",
+    slot: "layer",
+    price: 69,
+    compareAt: 85,
+    category: "Outerwear",
+    audience: "unisex",
+    ageGroup: "kids",
+    tags: ["kids", "jacket", "sherpa", "cozy", "winter", "colorblock"],
+    colors: ["#c9d39b", "#b4571f", "#efe8d8"],
+    rating: 4.9,
+    reviews: 142,
+    badge: "Kids Favorite",
+    image:
+      "https://readdy.ai/api/search-image?query=Kids%20cozy%20sherpa%20fleece%20zip-up%20jacket%20with%20warm%20earthy%20colorblocks%20on%20a%20minimal%20cream%20studio%20background%2C%20children%20fashion%20editorial%20photography%2C%20soft%20warm%20lighting%2C%20fluffy%20texture%2C%20high%20detail&width=800&height=1000&seq=fitsy-kids-sherpa-36&orientation=portrait",
+  },
+  {
+    id: "p-037",
+    name: "Youth Skate Graphic Pullover Hoodie",
+    slot: "top",
+    price: 52,
+    category: "Streetwear",
+    audience: "unisex",
+    ageGroup: "kids",
+    tags: ["kids", "hoodie", "skate", "graphic", "everyday", "unisex"],
+    colors: ["#efe8d8", "#3a3a34", "#c9d39b"],
+    rating: 4.8,
+    reviews: 95,
+    image:
+      "https://readdy.ai/api/search-image?query=Youth%20oversized%20cream%20skater%20hoodie%20with%20subtle%20fun%20graphic%20on%20a%20minimal%20cream%20studio%20backdrop%2C%20kids%20streetwear%20photography%2C%20soft%20diffused%20light%2C%20high%20detail&width=800&height=1000&seq=fitsy-youth-hoodie-37&orientation=portrait",
+  },
+  {
+    id: "p-038",
+    name: "Kids Relaxed Cargo Joggers",
+    slot: "bottom",
+    price: 48,
+    category: "Bottoms",
+    audience: "unisex",
+    ageGroup: "kids",
+    tags: ["kids", "cargo", "joggers", "pants", "comfortable"],
+    colors: ["#8a7f5c", "#3a3a34", "#c2ad8e"],
+    rating: 4.7,
+    reviews: 83,
+    image:
+      "https://readdy.ai/api/search-image?query=Kids%20olive%20green%20relaxed%20cargo%20jogger%20pants%20on%20a%20clean%20studio%20background%2C%20children%20clothing%20editorial%20photography%2C%20soft%20lighting%2C%20rich%20cotton%20texture%2C%20high%20detail&width=800&height=1000&seq=fitsy-kids-joggers-38&orientation=portrait",
+  },
+  {
+    id: "p-039",
+    name: "Kids Ribbed Pastel Beanie",
+    slot: "accessory",
+    price: 24,
+    category: "Accessories",
+    audience: "unisex",
+    ageGroup: "kids",
+    tags: ["kids", "beanie", "hat", "winter", "accessories"],
+    colors: ["#c9d39b", "#efe8d8", "#b4571f"],
+    rating: 4.9,
+    reviews: 64,
+    image:
+      "https://readdy.ai/api/search-image?query=Kids%20soft%20ribbed%20knit%20beanie%20in%20warm%20pastel%20tones%20on%20a%20minimal%20cream%20studio%20background%2C%20children%20accessory%20editorial%20photography%2C%20high%20detail&width=800&height=1000&seq=fitsy-kids-beanie-39&orientation=portrait",
+  },
+  {
+    id: "p-040",
+    name: "Classic Cashmere-Blend Cardigan",
+    slot: "top",
+    price: 155,
+    compareAt: 190,
+    category: "Tops",
+    audience: "women",
+    ageGroup: "seniors",
+    tags: ["cashmere", "cardigan", "knitwear", "classic", "elegant", "mature"],
+    colors: ["#efe8d8", "#8a7f5c", "#c2ad8e"],
+    rating: 4.9,
+    reviews: 187,
+    badge: "Timeless",
+    image:
+      "https://readdy.ai/api/search-image?query=Elegant%20cream%20cashmere%20cardigan%20with%20horn%20buttons%20on%20a%20minimal%20warm%20studio%20background%2C%20sophisticated%20mature%20fashion%20editorial%20photography%2C%20luxurious%20wool%20texture%2C%20soft%20even%20lighting%2C%20high%20detail&width=800&height=1000&seq=fitsy-mature-cardigan-40&orientation=portrait",
+  },
+  {
+    id: "p-041",
+    name: "Tailored Wool Crepe Pleated Trousers",
+    slot: "bottom",
+    price: 135,
+    category: "Bottoms",
+    audience: "women",
+    ageGroup: "seniors",
+    tags: ["trousers", "pleated", "wool", "tailored", "classic", "elegant"],
+    colors: ["#c2ad8e", "#3a3a34", "#efe8d8"],
+    rating: 4.8,
+    reviews: 114,
+    image:
+      "https://readdy.ai/api/search-image?query=Tailored%20sand%20beige%20wool%20crepe%20high-rise%20trousers%20with%20front%20pleats%20on%20a%20minimal%20cream%20studio%20background%2C%20refined%20classic%20editorial%20fashion%20photography%2C%20high%20detail&width=800&height=1000&seq=fitsy-mature-trousers-41&orientation=portrait",
+  },
+  {
+    id: "p-042",
+    name: "Men's Fine Merino Half-Zip Sweater",
+    slot: "top",
+    price: 125,
+    compareAt: 160,
+    category: "Tops",
+    audience: "men",
+    ageGroup: "seniors",
+    tags: ["merino", "half-zip", "sweater", "classic", "men", "dignified"],
+    colors: ["#3a3a34", "#4a5a72", "#8a7f5c"],
+    rating: 4.9,
+    reviews: 203,
+    badge: "Classic",
+    image:
+      "https://readdy.ai/api/search-image?query=Mens%20charcoal%20grey%20fine%20merino%20wool%20half-zip%20sweater%20on%20a%20minimal%20cream%20studio%20background%2C%20distinguished%20gentleman%20editorial%20photography%2C%20soft%20studio%20lighting%2C%20fine%20knit%20texture%2C%20high%20detail&width=800&height=1000&seq=fitsy-mature-halfzip-42&orientation=portrait",
+  },
+  {
+    id: "p-043",
+    name: "Men's Classic Pleated Wool Slacks",
+    slot: "bottom",
+    price: 120,
+    category: "Bottoms",
+    audience: "men",
+    ageGroup: "seniors",
+    tags: ["slacks", "pants", "wool", "classic", "men", "formal"],
+    colors: ["#3a3a34", "#c2ad8e", "#4a4a42"],
+    rating: 4.7,
+    reviews: 98,
+    image:
+      "https://readdy.ai/api/search-image?query=Mens%20classic%20dark%20grey%20tailored%20wool%20slacks%20on%20a%20cream%20studio%20background%2C%20refined%20classic%20menswear%20editorial%20photography%2C%20soft%20lighting%2C%20high%20detail&width=800&height=1000&seq=fitsy-mature-slacks-43&orientation=portrait",
+  },
+  {
+    id: "p-044",
+    name: "Silk Floral Neck Foulard Scarf",
+    slot: "accessory",
+    price: 55,
+    category: "Accessories",
+    audience: "women",
+    ageGroup: "seniors",
+    tags: ["scarf", "silk", "floral", "classic", "accessory", "elegant"],
+    colors: ["#b4571f", "#efe8d8", "#c9a227"],
+    rating: 4.8,
+    reviews: 77,
+    image:
+      "https://readdy.ai/api/search-image?query=Printed%20pure%20silk%20foulard%20square%20scarf%20folded%20on%20a%20minimal%20cream%20studio%20background%2C%20luxury%20accessory%20editorial%20photography%2C%20soft%20sheen%20silk%20texture%2C%20high%20detail&width=800&height=1000&seq=fitsy-mature-scarf-44&orientation=portrait",
+  },
+  {
+    id: "p-045",
+    name: "Structured Leather Penny Loafers",
+    slot: "accessory",
+    price: 175,
+    compareAt: 220,
+    category: "Footwear",
+    audience: "unisex",
+    ageGroup: "seniors",
+    tags: ["shoes", "loafers", "leather", "classic", "timeless"],
+    colors: ["#8a4a1f", "#3a3a34"],
+    rating: 4.9,
+    reviews: 156,
+    badge: "Heritage",
+    image:
+      "https://readdy.ai/api/search-image?query=Polished%20burgundy%20leather%20penny%20loafers%20on%20a%20minimal%20cream%20studio%20background%2C%20heritage%20footwear%20editorial%20photography%2C%20rich%20leather%20shine%2C%20warm%20neutral%20tones%2C%20high%20detail&width=800&height=1000&seq=fitsy-mature-loafers-45&orientation=portrait",
   },
 ];

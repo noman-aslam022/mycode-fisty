@@ -2,11 +2,21 @@ import type { Product } from "@/mocks/products";
 
 export type OutfitSlot = "top" | "bottom" | "layer" | "accessory";
 
+export type GenderArchetype = "men" | "women" | "all";
+export type AgeStage = "kids" | "adults" | "seniors" | "all";
+
+export interface ShopperProfile {
+  gender: GenderArchetype;
+  ageGroup: AgeStage;
+  styleVibe?: string;
+}
+
 export interface ImportedGarment {
   id: string;
   name: string;
   source: string;
   origin: string;
+  slot?: OutfitSlot;
 }
 
 export type OutfitEntry =
