@@ -1,12 +1,40 @@
-import type { Product } from "@/mocks/products";
+import type { Product, ProductAgeGroup } from "@/mocks/products";
 
+// ── Fisty UI types ──────────────────────────────────────────────────────────
+export type Gender = "men" | "women" | "kids";
+
+export type AgeGroup = "adult" | "child" | "old";
+
+export const GENDER_LABELS: Record<Gender, string> = {
+  men: "Men",
+  women: "Women",
+  kids: "Kids",
+};
+
+export const AGE_LABELS: Record<AgeGroup, string> = {
+  adult: "Adult",
+  child: "Child",
+  old: "Old",
+};
+
+// ── Legacy backend types (kept for existing backend components) ──────────────
 export type OutfitSlot = "top" | "bottom" | "layer" | "accessory";
+
+export type GenderArchetype = "men" | "women" | "all";
+export type AgeStage = ProductAgeGroup;
+
+export interface ShopperProfile {
+  gender: GenderArchetype;
+  ageGroup: AgeStage;
+  styleVibe?: string;
+}
 
 export interface ImportedGarment {
   id: string;
   name: string;
   source: string;
   origin: string;
+  slot?: OutfitSlot;
 }
 
 export type OutfitEntry =

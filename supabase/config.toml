@@ -1,0 +1,7 @@
+project_id = "kyoncutybpxcuxmyltlr"
+
+[functions.bria-tryon]
+verify_jwt = true
+# Requires the BRIA_API_KEY secret:
+#   supabase secrets set BRIA_API_KEY=...
+#   supabase functions deploy bria-tryon

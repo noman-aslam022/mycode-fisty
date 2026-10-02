@@ -1,26 +1,51 @@
-import type { OutfitEntry, OutfitSlot } from "../types";
+import type { OutfitEntry } from "../types";
+import { detectBody, type Landmark } from "./poseDetector";
 
 export interface PoseReference {
   width: number;
   height: number;
-  personCenterX: number;
-  headTopY: number;
+  landmarks: Landmark[] | null;
+  silhouetteWidth: number;
+  silhouetteHeight: number;
+  silhouette: Uint8Array | null;
   faceBox: { x: number; y: number; width: number; height: number };
-  torsoBox: { x: number; y: number; width: number; height: number };
-  legsBox: { x: number; y: number; width: number; height: number };
-  accessories: {
-    eyesBox: { x: number; y: number; width: number; height: number };
-    headCrownBox: { x: number; y: number; width: number; height: number };
-    neckBox: { x: number; y: number; width: number; height: number };
-    bagBox: { x: number; y: number; width: number; height: number };
-    feetBox: { x: number; y: number; width: number; height: number };
-    wristBox: { x: number; y: number; width: number; height: number };
-  };
+}
+
+// MediaPipe Pose landmark indices.
+const LM = {
+  nose: 0,
+  lEye: 2,
+  rEye: 5,
+  lEar: 7,
+  rEar: 8,
+  mouthL: 9,
+  mouthR: 10,
+  lSh: 11,
+  rSh: 12,
+  lElb: 13,
+  rElb: 14,
+  lWr: 15,
+  rWr: 16,
+  lHip: 23,
+  rHip: 24,
+  lKnee: 25,
+  rKnee: 26,
+  lAnk: 27,
+  rAnk: 28,
+  lHeel: 29,
+  rHeel: 30,
+  lFoot: 31,
+  rFoot: 32,
+} as const;
+
+interface Pt {
+  x: number;
+  y: number;
 }
 
 /**
- * Strips the data URI prefix (e.g. data:image/png;base64,) to return only raw base64 bytes
- * as strictly required by Bria AI API documentation.
+ * Strips the data URI prefix (e.g. data:image/png;base64,) to return only raw
+ * base64 bytes, as required by the try-on API.
  */
 export function stripDataUri(str: string): string {
   if (!str) return str;
@@ -31,9 +56,7 @@ export function stripDataUri(str: string): string {
   return str;
 }
 
-/**
- * Loads an image URL/dataUrl into an HTMLImageElement asynchronously.
- */
+/** Loads an image URL/dataUrl into an HTMLImageElement asynchronously. */
 export function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -44,353 +67,535 @@ export function loadImage(src: string): Promise<HTMLImageElement> {
   });
 }
 
-/**
- * Analyzes the uploaded person photo to detect the person's exact geometry and body landmarks.
- * Accurately locates head/face, shoulders, chest/torso, waist/legs, and footwear.
- */
-export async function analyzePersonPhoto(imageSrc: string): Promise<PoseReference> {
-  const img = await loadImage(imageSrc);
-  const width = img.naturalWidth || img.width;
-  const height = img.naturalHeight || img.height;
+function toPx(landmarks: Landmark[], index: number, w: number, h: number): Pt {
+  const p = landmarks[index];
+  return { x: p.x * w, y: p.y * h };
+}
 
-  // 1. Scan for person silhouette / head boundary using vertical contrast
-  let personCenterX = Math.round(width * 0.50);
-  let headTopY = Math.round(height * 0.22);
-  let personWidth = Math.round(width * 0.60);
+function avg(a: number, b: number): number {
+  return (a + b) / 2;
+}
 
-  // Scan down center columns to find where the subject starts (head/hair boundary)
-  try {
-    const scanCanvas = document.createElement("canvas");
-    const sW = 100;
-    const sH = 100;
-    scanCanvas.width = sW;
-    scanCanvas.height = sH;
-    const sCtx = scanCanvas.getContext("2d", { willReadFrequently: true });
-    if (sCtx) {
-      sCtx.drawImage(img, 0, 0, sW, sH);
-      const data = sCtx.getImageData(0, 0, sW, sH).data;
+function dist(a: Pt, b: Pt): number {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
 
-      // Sample background color at top center
-      const bgR = data[0];
-      const bgG = data[1];
-      const bgB = data[2];
-
-      // Scan downwards along center columns (35% to 65% width) to find the first significant subject pixel
-      for (let y = 5; y < 50; y++) {
-        let diffCount = 0;
-        for (let x = 35; x <= 65; x += 5) {
-          const idx = (y * sW + x) * 4;
-          const r = data[idx];
-          const g = data[idx + 1];
-          const b = data[idx + 2];
-          const diff = Math.abs(r - bgR) + Math.abs(g - bgG) + Math.abs(b - bgB);
-          if (diff > 45) {
-            diffCount++;
-          }
-        }
-        if (diffCount >= 3) {
-          // Found top of head
-          headTopY = Math.round((y / 100) * height);
-          break;
-        }
+/** Bounding box of all "person" pixels in a silhouette mask, or null. */
+function silhouetteBounds(
+  silhouette: Uint8Array,
+  sw: number,
+  sh: number
+): { x: number; y: number; width: number; height: number } | null {
+  let minX = sw;
+  let minY = sh;
+  let maxX = -1;
+  let maxY = -1;
+  for (let y = 0; y < sh; y++) {
+    for (let x = 0; x < sw; x++) {
+      if (silhouette[y * sw + x] > 127) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
       }
     }
-  } catch {
-    // Fall back to standard fashion portrait proportions
   }
-
-  // 2. Anatomical proportions relative to detected head
-  // Standard human proportions: Head is ~14-16% of standing height
-  const headH = Math.max(Math.round(height * 0.14), Math.min(Math.round(height * 0.22), Math.round((height - headTopY) * 0.18)));
-  const headW = Math.round(headH * 0.85);
-
-  const faceBox = {
-    x: Math.max(0, Math.round(personCenterX - headW / 2)),
-    y: Math.max(0, Math.round(headTopY + headH * 0.15)),
-    width: headW,
-    height: Math.round(headH * 0.85),
-  };
-
-  const chinY = headTopY + headH;
-  const neckY = chinY + Math.round(headH * 0.08);
-
-  // 3. SHIRT / TORSO / UPPER BODY (Tops, Hoodies, Tees, Jackets)
-  // Starts right at the collar/neckline and extends down through chest, stomach to waistline.
-  // Width covers chest, shoulders, and both upper arms/sleeves.
-  const torsoY = neckY - Math.round(headH * 0.15); // Slight upward padding to ensure complete collar coverage
-  const torsoH = Math.round(height * 0.32);
-  const torsoW = Math.min(width, Math.round(width * 0.58));
-  const torsoX = Math.max(0, Math.round(personCenterX - torsoW / 2));
-
-  // 4. PANTS / SHORTS / LOWER BODY (Bottoms, Trousers, Cargo, Jeans)
-  // Starts at the waistline and extends down through thighs, knees, and shins to ankles
-  const waistY = torsoY + torsoH - Math.round(headH * 0.20);
-  const legsH = Math.max(0, Math.round(height * 0.35));
-  const legsW = Math.min(width, Math.round(width * 0.48));
-  const legsX = Math.max(0, Math.round(personCenterX - legsW / 2));
-
-  // 5. SHOES / FOOTWEAR (Boots, Sneakers, Shoes, Slides)
-  // Located at the very bottom of the photo
-  const feetBoxY = Math.max(0, height - Math.round(height * 0.18));
-  const feetBoxH = Math.round(height * 0.18);
-  const feetBoxW = Math.min(width, Math.round(width * 0.52));
-  const feetBoxX = Math.max(0, Math.round(personCenterX - feetBoxW / 2));
-
-  // 6. ACCESSORY ANCHORS
-  // Eyes band (sunglasses, shades)
-  const eyesBox = {
-    x: Math.max(0, Math.round(personCenterX - headW * 0.46)),
-    y: Math.round(headTopY + headH * 0.40),
-    width: Math.round(headW * 0.92),
-    height: Math.round(headH * 0.28),
-  };
-
-  // Head Crown (hats, caps, beanies)
-  const headCrownBox = {
-    x: Math.max(0, Math.round(personCenterX - headW * 0.55)),
-    y: Math.max(0, Math.round(headTopY - headH * 0.20)),
-    width: Math.round(headW * 1.10),
-    height: Math.round(headH * 0.60),
-  };
-
-  // Neck (necklaces, chains, pendants)
-  const neckBox = {
-    x: Math.max(0, Math.round(personCenterX - headW * 0.50)),
-    y: chinY,
-    width: Math.round(headW * 1.0),
-    height: Math.round(headH * 0.35),
-  };
-
-  // Bag (crossbody, shoulder bag, tote)
-  const bagBox = {
-    x: Math.min(width - Math.round(torsoW * 0.45), Math.round(personCenterX + torsoW * 0.15)),
-    y: Math.round(torsoY + torsoH * 0.35),
-    width: Math.round(torsoW * 0.45),
-    height: Math.round(torsoH * 0.55),
-  };
-
-  // Wrist / Hands (rings, watches, bracelets)
-  const wristBox = {
-    x: Math.max(0, Math.round(torsoX - torsoW * 0.05)),
-    y: Math.round(torsoY + torsoH * 0.60),
-    width: Math.round(torsoW * 0.28),
-    height: Math.round(torsoH * 0.32),
-  };
-
-  return {
-    width,
-    height,
-    personCenterX,
-    headTopY,
-    faceBox,
-    torsoBox: { x: torsoX, y: torsoY, width: torsoW, height: torsoH },
-    legsBox: { x: legsX, y: waistY, width: legsW, height: legsH },
-    accessories: {
-      eyesBox,
-      headCrownBox,
-      neckBox,
-      bagBox,
-      feetBox: { x: feetBoxX, y: feetBoxY, width: feetBoxW, height: feetBoxH },
-      wristBox,
-    },
-  };
+  if (maxX < 0 || maxY < 0) return null;
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
 }
 
 /**
- * Generates a clean, high-precision binary inpainting mask matching official Bria AI documentation.
- * Black (#000000) = PRESERVE (Face, hair, skin, unedited garments, background).
- * White (#FFFFFF) = EDIT / INPAINT (Only the selected clothing or accessory regions).
- * Formatted with generous coverage beyond edges as specified by Bria for seamless blending.
+ * Analyzes the uploaded person photo using real detection: pose landmarks for
+ * the joints/face, and person segmentation for the silhouette. This replaces
+ * the old "guess by image percentage" approach that mis-aligned on real photos.
+ */
+export async function analyzePersonPhoto(imageSrc: string): Promise<PoseReference> {
+  const img = await loadImage(imageSrc);
+  const detection = await detectBody(img);
+  const { width, height, landmarks } = detection;
+
+  let faceBox = {
+    x: Math.round(width * 0.3),
+    y: Math.round(height * 0.06),
+    width: Math.round(width * 0.4),
+    height: Math.round(height * 0.24),
+  };
+
+  if (landmarks && landmarks.length > 32) {
+    const lEar = toPx(landmarks, LM.lEar, width, height);
+    const rEar = toPx(landmarks, LM.rEar, width, height);
+    const lEye = toPx(landmarks, LM.lEye, width, height);
+    const rEye = toPx(landmarks, LM.rEye, width, height);
+    const mouthL = toPx(landmarks, LM.mouthL, width, height);
+    const mouthR = toPx(landmarks, LM.mouthR, width, height);
+
+    const cx = avg(lEar.x, rEar.x);
+    const headW = Math.max(dist(lEar, rEar), width * 0.08);
+    const eyeY = avg(lEye.y, rEye.y);
+    const chinY = Math.max(mouthL.y, mouthR.y) + headW * 0.45;
+    const topY = eyeY - headW * 0.95;
+
+    faceBox = {
+      x: Math.max(0, Math.round(cx - headW * 0.62)),
+      y: Math.max(0, Math.round(topY)),
+      width: Math.round(headW * 1.24),
+      height: Math.round(Math.max(chinY - topY, headW)),
+    };
+  } else if (detection.silhouette && detection.silhouetteWidth > 0) {
+    const b = silhouetteBounds(
+      detection.silhouette,
+      detection.silhouetteWidth,
+      detection.silhouetteHeight
+    );
+    if (b) {
+      const sx = width / detection.silhouetteWidth;
+      const sy = height / detection.silhouetteHeight;
+      const px = b.x * sx;
+      const py = b.y * sy;
+      const pw = b.width * sx;
+      const ph = b.height * sy;
+      faceBox = {
+        x: Math.round(px + pw * 0.3),
+        y: Math.round(py),
+        width: Math.round(pw * 0.4),
+        height: Math.round(ph * 0.2),
+      };
+    }
+  }
+
+  return { ...detection, faceBox };
+}
+
+let uid = 0;
+function nextId(): string {
+  uid += 1;
+  return `m-${uid}`;
+}
+
+function ellipse(ctx: CanvasRenderingContext2D, cx: number, cy: number, rx: number, ry: number) {
+  ctx.beginPath();
+  ctx.ellipse(cx, cy, Math.max(1, rx), Math.max(1, ry), 0, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function poly(ctx: CanvasRenderingContext2D, points: Pt[]) {
+  ctx.beginPath();
+  points.forEach((p, i) => {
+    if (i === 0) ctx.moveTo(p.x, p.y);
+    else ctx.lineTo(p.x, p.y);
+  });
+  ctx.closePath();
+  ctx.fill();
+}
+
+/** Build a rectangle polygon around a limb segment (a -> b) of given radius. */
+function limbQuad(a: Pt, b: Pt, r: number): Pt[] {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const nx = (-dy / len) * r;
+  const ny = (dx / len) * r;
+  return [
+    { x: a.x + nx, y: a.y + ny },
+    { x: b.x + nx, y: b.y + ny },
+    { x: b.x - nx, y: b.y - ny },
+    { x: a.x - nx, y: a.y - ny },
+  ];
+}
+
+interface HeadGeom {
+  cx: number;
+  headW: number;
+  eyeY: number;
+  topY: number;
+  chinY: number;
+}
+
+function headGeometry(lm2: Landmark[], w: number, h: number): HeadGeom {
+  const lEar = toPx(lm2, LM.lEar, w, h);
+  const rEar = toPx(lm2, LM.rEar, w, h);
+  const lEye = toPx(lm2, LM.lEye, w, h);
+  const rEye = toPx(lm2, LM.rEye, w, h);
+  const mouthL = toPx(lm2, LM.mouthL, w, h);
+  const mouthR = toPx(lm2, LM.mouthR, w, h);
+  const cx = avg(lEar.x, rEar.x);
+  const headW = Math.max(dist(lEar, rEar), w * 0.08);
+  const eyeY = avg(lEye.y, rEye.y);
+  const chinY = Math.max(mouthL.y, mouthR.y) + headW * 0.45;
+  const topY = eyeY - headW * 0.95;
+  return { cx, headW, eyeY, topY, chinY };
+}
+
+export function accessoryKind(entry: OutfitEntry): string {
+  const name = (entry.kind === "catalog" ? entry.product.name : entry.garment.name).toLowerCase();
+  const tags = entry.kind === "catalog" ? entry.product.tags.join(" ").toLowerCase() : "";
+  const desc = `${name} ${tags}`;
+  if (/(boot|shoe|sneaker|footwear|slide|sandal)/.test(desc)) return "footwear";
+  if (/(glass|shade|optic|eyewear|sunglass)/.test(desc)) return "glasses";
+  if (/(hat|cap|beanie|balaclava|bucket)/.test(desc)) return "hat";
+  if (/(necklace|chain|pendant|jewellery|jewelry|earring|hoop)/.test(desc)) return "necklace";
+  if (/(bag|crossbody|tote|backpack)/.test(desc)) return "bag";
+  if (/(ring|wrist|watch|bracelet)/.test(desc)) return "wrist";
+  return "generic";
+}
+
+/**
+ * Generates the try-on mask used by the AI engine.
+ *   White (#ffffff) = EDIT region (the selected clothing / accessory).
+ *   Black (#000000) = PRESERVE (background, face, hair, skin, untouched areas).
+ *
+ * The editable region is built from the detected body joints, then clipped to
+ * the real person silhouette so it never grabs background, and finally the
+ * face / hair / neck are carved back out so they are never damaged.
  */
 export async function generateOutfitMask(
   pose: PoseReference,
   entries: OutfitEntry[]
 ): Promise<string> {
-  const canvas = document.createElement("canvas");
-  canvas.width = pose.width;
-  canvas.height = pose.height;
-  const ctx = canvas.getContext("2d");
+  const { width, height, landmarks, silhouette } = pose;
+
+  // --- base mask: everything protected (black) -----------------------------
+  const base = document.createElement("canvas");
+  base.width = width;
+  base.height = height;
+  const baseCtx = base.getContext("2d");
+  if (!baseCtx) return "";
+  baseCtx.fillStyle = "#000000";
+  baseCtx.fillRect(0, 0, width, height);
+
+  // --- edit layer: transparent, we draw white clothing shapes ---------------
+  const edit = document.createElement("canvas");
+  edit.width = width;
+  edit.height = height;
+  const ctx = edit.getContext("2d");
   if (!ctx) return "";
-
-  // 1. Black background = 100% PROTECTED by default
-  ctx.fillStyle = "#000000";
-  ctx.fillRect(0, 0, pose.width, pose.height);
-
   ctx.fillStyle = "#ffffff";
-  const slots = new Set<OutfitSlot>(entries.map((e) => e.slot));
 
-  // 2. SHIRT / TOP / LAYER MASK:
-  // Must cover the collar, shoulders, chest, abdomen, and both sleeves completely!
-  if (slots.has("top") || slots.has("layer")) {
-    const { x, y, width: w, height: h } = pose.torsoBox;
+  const slots = new Set(entries.map((e) => e.slot));
+  const hasTop = slots.has("top") || slots.has("layer");
+  const hasBottom = slots.has("bottom");
 
-    // Torso body: collar to waist
-    ctx.fillRect(x, y, w, h);
+  const hasGlasses = entries.some(
+    (e) => e.slot === "accessory" && accessoryKind(e) === "glasses"
+  );
+  const hasHat = entries.some((e) => e.slot === "accessory" && accessoryKind(e) === "hat");
+  const hasNecklace = entries.some(
+    (e) => e.slot === "accessory" && accessoryKind(e) === "necklace"
+  );
 
-    // Left and right sleeves and shoulders
-    const sleeveSpread = Math.round(w * 0.16);
-    const shoulderH = Math.round(h * 0.55);
-    ctx.fillRect(
-      Math.max(0, x - sleeveSpread),
-      y + Math.round(h * 0.05),
-      w + sleeveSpread * 2,
-      shoulderH
-    );
+  if (landmarks && landmarks.length > 32) {
+    const lm = landmarks;
+    const p = (i: number) => toPx(lm, i, width, height);
+    const lSh = p(LM.lSh);
+    const rSh = p(LM.rSh);
+    const lElb = p(LM.lElb);
+    const rElb = p(LM.rElb);
+    const lWr = p(LM.lWr);
+    const rWr = p(LM.rWr);
+    const lHip = p(LM.lHip);
+    const rHip = p(LM.rHip);
+    const lKnee = p(LM.lKnee);
+    const rKnee = p(LM.rKnee);
+    const lAnk = p(LM.lAnk);
+    const rAnk = p(LM.rAnk);
+    const lFoot = p(LM.lFoot);
+    const rFoot = p(LM.rFoot);
+
+    const shoulderW = Math.max(dist(lSh, rSh), width * 0.1);
+    const head = headGeometry(lm, width, height);
+
+    // TOP / LAYER — cover shoulders, chest, abdomen and the arms.
+    if (hasTop) {
+      const isLayer = slots.has("layer");
+      // widen hips a touch so the hem of the garment is included
+      const hipPadX = shoulderW * 0.12;
+      poly(ctx, [
+        { x: lSh.x - shoulderW * 0.18, y: lSh.y - shoulderW * 0.06 },
+        { x: rSh.x + shoulderW * 0.18, y: rSh.y - shoulderW * 0.06 },
+        { x: rHip.x + hipPadX, y: rHip.y + shoulderW * 0.1 },
+        { x: lHip.x - hipPadX, y: lHip.y + shoulderW * 0.1 },
+      ]);
+      // Arms: upper arm always; forearm too for a layer (outerwear).
+      const armR = shoulderW * 0.16;
+      poly(ctx, limbQuad(lSh, lElb, armR));
+      poly(ctx, limbQuad(rSh, rElb, armR));
+      if (isLayer) {
+        poly(ctx, limbQuad(lElb, lWr, armR * 1.05));
+        poly(ctx, limbQuad(rElb, rWr, armR * 1.05));
+      }
+    }
+
+    // BOTTOM — hips down to ankles.
+    if (hasBottom) {
+      const legR = shoulderW * 0.16;
+      poly(ctx, [
+        { x: lHip.x - shoulderW * 0.1, y: lHip.y - shoulderW * 0.05 },
+        { x: rHip.x + shoulderW * 0.1, y: rHip.y - shoulderW * 0.05 },
+        { x: rAnk.x + legR, y: rAnk.y + legR },
+        { x: lAnk.x - legR, y: lAnk.y + legR },
+      ]);
+    }
+
+    // ACCESSORIES
+    for (const entry of entries) {
+      if (entry.slot !== "accessory") continue;
+      const kind = accessoryKind(entry);
+      if (kind === "footwear") {
+        const footR = shoulderW * 0.16;
+        poly(ctx, limbQuad(lAnk, lFoot, footR * 1.4));
+        poly(ctx, limbQuad(rAnk, rFoot, footR * 1.4));
+        // extend the sole to the very bottom
+        poly(ctx, [
+          { x: lAnk.x - footR * 1.6, y: lAnk.y },
+          { x: rAnk.x + footR * 1.6, y: rAnk.y },
+          { x: rAnk.x + footR * 1.6, y: height },
+          { x: lAnk.x - footR * 1.6, y: height },
+        ]);
+      } else if (kind === "glasses") {
+        ellipse(ctx, head.cx, head.eyeY, head.headW * 0.78, head.headW * 0.34);
+      } else if (kind === "hat") {
+        ellipse(ctx, head.cx, head.eyeY - head.headW * 0.42, head.headW * 0.85, head.headW * 0.72);
+      } else if (kind === "necklace") {
+        ellipse(ctx, head.cx, head.chinY + head.headW * 0.42, head.headW * 0.55, head.headW * 0.4);
+      } else if (kind === "bag") {
+        const side = rHip.x > lHip.x ? rHip : lHip;
+        const midY = avg(lHip.y, lSh.y);
+        ellipse(
+          ctx,
+          side.x + shoulderW * 0.24,
+          midY + shoulderW * 0.2,
+          shoulderW * 0.3,
+          shoulderW * 0.42
+        );
+      } else if (kind === "wrist") {
+        ellipse(ctx, lWr.x, lWr.y, shoulderW * 0.11, shoulderW * 0.11);
+        ellipse(ctx, rWr.x, rWr.y, shoulderW * 0.11, shoulderW * 0.11);
+      } else {
+        // Fallback: a modest band on the upper body.
+        ellipse(ctx, head.cx, avg(lSh.y, lHip.y), shoulderW * 0.4, shoulderW * 0.5);
+      }
+    }
+  } else if (silhouette && pose.silhouetteWidth > 0) {
+    // No joints, but we still have the person silhouette: build from its bbox.
+    const b = silhouetteBounds(silhouette, pose.silhouetteWidth, pose.silhouetteHeight);
+    if (b) {
+      const sx = width / pose.silhouetteWidth;
+      const sy = height / pose.silhouetteHeight;
+      const bx = b.x * sx;
+      const by = b.y * sy;
+      const bw = b.width * sx;
+      const bh = b.height * sy;
+
+      if (hasTop) {
+        ctx.fillRect(bx + bw * 0.1, by + bh * 0.14, bw * 0.8, bh * 0.4);
+      }
+      if (hasBottom) {
+        ctx.fillRect(bx + bw * 0.16, by + bh * 0.5, bw * 0.68, bh * 0.44);
+      }
+      entries.forEach((entry) => {
+        if (entry.slot !== "accessory") return;
+        const kind = accessoryKind(entry);
+        if (kind === "footwear") {
+          ctx.fillRect(bx + bw * 0.12, by + bh * 0.86, bw * 0.76, bh * 0.14);
+        } else if (kind === "hat") {
+          ellipse(ctx, bx + bw / 2, by + bh * 0.08, bw * 0.32, bh * 0.08);
+        } else if (kind === "glasses") {
+          ellipse(ctx, bx + bw / 2, by + bh * 0.1, bw * 0.3, bh * 0.045);
+        } else {
+          ellipse(ctx, bx + bw / 2, by + bh * 0.5, bw * 0.4, bh * 0.28);
+        }
+      });
+    }
+  } else {
+    // Last resort: neither pose joints nor a silhouette came back. Fall back
+    // to proportional body bands for a typical full-body framing, so the
+    // editable region is never empty and the face is never touched.
+    const cx = width / 2;
+    const bandW = width * 0.34;
+    if (hasTop) {
+      ctx.fillRect(cx - bandW, height * 0.24, bandW * 2, height * 0.32);
+    }
+    if (hasBottom) {
+      ctx.fillRect(cx - bandW * 0.92, height * 0.52, bandW * 1.84, height * 0.4);
+    }
+    entries.forEach((entry) => {
+      if (entry.slot !== "accessory") return;
+      const kind = accessoryKind(entry);
+      if (kind === "footwear") {
+        ctx.fillRect(cx - bandW * 0.9, height * 0.88, bandW * 1.8, height * 0.12);
+      } else if (kind === "hat") {
+        ellipse(ctx, cx, height * 0.1, bandW * 0.7, height * 0.05);
+      } else if (kind === "glasses") {
+        ellipse(ctx, cx, height * 0.12, bandW * 0.6, height * 0.03);
+      } else if (kind === "necklace") {
+        ellipse(ctx, cx, height * 0.3, bandW * 0.5, height * 0.06);
+      } else {
+        ellipse(ctx, cx, height * 0.45, bandW * 0.8, height * 0.22);
+      }
+    });
   }
 
-  // 3. BOTTOM / PANTS / SHORTS MASK:
-  if (slots.has("bottom")) {
-    const { x, y, width: w, height: h } = pose.legsBox;
-    ctx.fillRect(x, y, w, h);
-  }
+  // --- clip the edit region to the real person silhouette -------------------
+  if (silhouette && pose.silhouetteWidth > 0) {
+    const silSmall = document.createElement("canvas");
+    silSmall.width = pose.silhouetteWidth;
+    silSmall.height = pose.silhouetteHeight;
+    const sCtx = silSmall.getContext("2d");
+    if (sCtx) {
+      const imageData = sCtx.createImageData(pose.silhouetteWidth, pose.silhouetteHeight);
+      for (let i = 0; i < silhouette.length; i++) {
+        imageData.data[i * 4] = 255;
+        imageData.data[i * 4 + 1] = 255;
+        imageData.data[i * 4 + 2] = 255;
+        imageData.data[i * 4 + 3] = silhouette[i];
+      }
+      sCtx.putImageData(imageData, 0, 0);
 
-  // 4. ACCESSORIES MASK:
-  for (const entry of entries) {
-    if (entry.slot === "accessory") {
-      const name = (entry.kind === "catalog" ? entry.product.name : entry.garment.name).toLowerCase();
-      const tags = (entry.kind === "catalog" ? entry.product.tags.join(" ") : "").toLowerCase();
-      const desc = `${name} ${tags}`;
-
-      if (desc.includes("boot") || desc.includes("shoe") || desc.includes("sneaker") || desc.includes("footwear") || desc.includes("slide") || desc.includes("sandal")) {
-        // Shoes / Footwear: mask the feet area
-        const { x, y, width: w, height: h } = pose.accessories.feetBox;
-        ctx.fillRect(x, y, w, h);
-      } else if (desc.includes("glass") || desc.includes("shade") || desc.includes("optic") || desc.includes("eyewear")) {
-        // Sunglasses: mask the eye band
-        const { x, y, width: w, height: h } = pose.accessories.eyesBox;
-        ctx.beginPath();
-        ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
-        ctx.fill();
-      } else if (desc.includes("hat") || desc.includes("cap") || desc.includes("beanie") || desc.includes("balaclava")) {
-        // Hats, caps
-        const { x, y, width: w, height: h } = pose.accessories.headCrownBox;
-        ctx.beginPath();
-        ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
-        ctx.fill();
-      } else if (desc.includes("necklace") || desc.includes("chain") || desc.includes("pendant") || desc.includes("jewellery") || desc.includes("jewelry")) {
-        // Necklaces
-        const { x, y, width: w, height: h } = pose.accessories.neckBox;
-        ctx.beginPath();
-        ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
-        ctx.fill();
-      } else if (desc.includes("bag") || desc.includes("crossbody") || desc.includes("tote") || desc.includes("backpack")) {
-        // Crossbody bags
-        const { x, y, width: w, height: h } = pose.accessories.bagBox;
-        ctx.fillRect(x, y, w, h);
-      } else if (desc.includes("ring") || desc.includes("wrist") || desc.includes("watch") || desc.includes("bracelet")) {
-        // Rings, watches
-        const { x, y, width: w, height: h } = pose.accessories.wristBox;
-        ctx.beginPath();
-        ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
-        ctx.fill();
+      const silFull = document.createElement("canvas");
+      silFull.width = width;
+      silFull.height = height;
+      const fCtx = silFull.getContext("2d");
+      if (fCtx) {
+        fCtx.drawImage(silSmall, 0, 0, width, height);
+        ctx.globalCompositeOperation = "destination-in";
+        ctx.drawImage(silFull, 0, 0);
+        ctx.globalCompositeOperation = "source-over";
       }
     }
   }
 
-  // 5. HARD FACE & HEAD PROTECTION CUTOUT:
-  // Forces the user's face (cheeks, eyes, nose, mouth, chin, ears, and hair) to be STRICTLY BLACK (100% protected)
-  // unless eyewear was chosen (where only the eye band is permitted)
-  ctx.fillStyle = "#000000";
-  const hasGlasses = entries.some(
-    (e) =>
-      e.slot === "accessory" &&
-      (e.kind === "catalog" ? e.product.name : e.garment.name).toLowerCase().includes("glass")
-  );
-
-  const { x: fx, y: fy, width: fw, height: fh } = pose.faceBox;
-  if (!hasGlasses) {
-    // Cut out full face
-    ctx.beginPath();
-    ctx.ellipse(fx + fw / 2, fy + fh / 2, fw * 0.60, fh * 0.60, 0, 0, Math.PI * 2);
-    ctx.fill();
-  } else {
-    // Cut out lower face (nose tip, mouth, jawline)
-    const lowerFaceY = fy + Math.round(fh * 0.55);
-    const lowerFaceH = Math.round(fh * 0.55);
-    ctx.beginPath();
-    ctx.ellipse(fx + fw / 2, lowerFaceY + lowerFaceH / 2, fw * 0.55, lowerFaceH / 2, 0, 0, Math.PI * 2);
-    ctx.fill();
+  // --- carve the protected zones back out (face / hair / neck) --------------
+  ctx.globalCompositeOperation = "destination-out";
+  if (landmarks && landmarks.length > 32) {
+    const head = headGeometry(landmarks, width, height);
+    // Face: protect everything except the eye band when glasses are chosen.
+    const faceTop = hasGlasses ? head.eyeY + head.headW * 0.02 : head.eyeY - head.headW * 0.5;
+    const faceBottom = head.chinY;
+    ellipse(
+      ctx,
+      head.cx,
+      avg(faceTop, faceBottom),
+      head.headW * 0.62,
+      Math.max((faceBottom - faceTop) / 2, head.headW * 0.3)
+    );
+    // Hair / crown: protected unless a hat is being fitted.
+    if (!hasHat) {
+      ellipse(
+        ctx,
+        head.cx,
+        avg(head.topY, head.eyeY),
+        head.headW * 0.95,
+        Math.max((head.eyeY - head.topY) / 2, head.headW * 0.4)
+      );
+    }
+    // Neck: protected unless a necklace is being fitted.
+    if (!hasNecklace) {
+      ellipse(ctx, head.cx, head.chinY + head.headW * 0.28, head.headW * 0.5, head.headW * 0.34);
+    }
+  } else if (silhouette && pose.silhouetteWidth > 0) {
+    const b = silhouetteBounds(silhouette, pose.silhouetteWidth, pose.silhouetteHeight);
+    if (b) {
+      const sx = width / pose.silhouetteWidth;
+      const sy = height / pose.silhouetteHeight;
+      const bx = b.x * sx;
+      const by = b.y * sy;
+      const bw = b.width * sx;
+      const bh = b.height * sy;
+      ellipse(ctx, bx + bw / 2, by + bh * 0.08, bw * 0.28, bh * 0.09);
+    }
   }
+  ctx.globalCompositeOperation = "source-over";
 
-  return canvas.toDataURL("image/png");
+  // --- compose: white edit region on top of the black protected base --------
+  baseCtx.drawImage(edit, 0, 0);
+  return base.toDataURL("image/png");
 }
 
 /**
- * Image Cleanup Engine After Product is Applied:
- * Guarantees a photorealistic, clean result with NO blurry seams, NO elliptical borders on pavement,
- * and 100% preservation of the user's real face, hair, and background.
+ * Preservation-first compositing.
+ *
+ * The try-on model returns a freshly rendered frame, so we blend it back onto
+ * the ORIGINAL photo using the body mask:
+ *   - Inside the editable (clothing) region  -> the generated result is used.
+ *   - Everywhere else (face, hair, skin, hands, background) -> the original
+ *     photo pixels are kept 100% untouched.
+ *
+ * This guarantees the person can never be altered outside their garments,
+ * regardless of what the generative model decides to do.
  */
-export async function cleanUpTryOnResult(
+export async function compositeTryOnResult(
   originalPhotoSrc: string,
-  briaResultUrl: string,
-  pose?: PoseReference | null
+  generatedUrl: string,
+  maskDataUrl: string
 ): Promise<string> {
-  // If no pose or original image, return Bria's clean generation directly
-  if (!pose || !originalPhotoSrc) {
-    return briaResultUrl;
+  if (!originalPhotoSrc) {
+    throw new Error("Your original photo is missing. Please upload it again.");
   }
-
+  if (!maskDataUrl) {
+    throw new Error("We could not lock your face and body for this fit. Please try again.");
+  }
   try {
-    const [origImg, genImg] = await Promise.all([
+    const [baseImg, genImg, maskImg] = await Promise.all([
       loadImage(originalPhotoSrc),
-      loadImage(briaResultUrl),
+      loadImage(generatedUrl),
+      loadImage(maskDataUrl),
     ]);
 
-    const width = origImg.naturalWidth || origImg.width;
-    const height = origImg.naturalHeight || origImg.height;
-
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return briaResultUrl;
-
-    // 1. Draw Bria's clean, photorealistically inpainted garment result
-    ctx.drawImage(genImg, 0, 0, width, height);
-
-    // 2. Clean Face Touch-up:
-    // Softly restore the user's authentic camera face/eyes/skin onto the face region
-    // using a soft feathered radial gradient strictly around the face oval.
-    // This leaves the new clothes, new shoes, pants, and background 100% untouched and clean!
-    const { x: fx, y: fy, width: fw, height: fh } = pose.faceBox;
-    const faceCenterX = fx + fw / 2;
-    const faceCenterY = fy + fh / 2;
-    const faceRadius = Math.max(fw, fh) * 0.55;
-
-    // Offscreen canvas for the original face
-    const faceCanvas = document.createElement("canvas");
-    faceCanvas.width = width;
-    faceCanvas.height = height;
-    const fCtx = faceCanvas.getContext("2d");
-    if (fCtx) {
-      // Draw original face through a feathered soft radial mask
-      const gradient = fCtx.createRadialGradient(
-        faceCenterX,
-        faceCenterY,
-        faceRadius * 0.55,
-        faceCenterX,
-        faceCenterY,
-        faceRadius
-      );
-      gradient.addColorStop(0, "rgba(255, 255, 255, 1)");
-      gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
-
-      fCtx.fillStyle = gradient;
-      fCtx.beginPath();
-      fCtx.arc(faceCenterX, faceCenterY, faceRadius, 0, Math.PI * 2);
-      fCtx.fill();
-
-      // Source-in to clip original face
-      fCtx.globalCompositeOperation = "source-in";
-      fCtx.drawImage(origImg, 0, 0, width, height);
-
-      // Blend authentic face cleanly onto the generated try-on result
-      ctx.drawImage(faceCanvas, 0, 0);
+    const width = baseImg.naturalWidth || baseImg.width;
+    const height = baseImg.naturalHeight || baseImg.height;
+    if (!width || !height) {
+      throw new Error("Your photo could not be read. Please try again.");
     }
 
-    return canvas.toDataURL("image/jpeg", 0.95);
+    // 1. Feather the mask so the seam between the new garment and the original
+    //    pixels blends softly instead of showing a hard cut.
+    const feather = Math.max(2, Math.round(Math.min(width, height) * 0.012));
+    const maskCanvas = document.createElement("canvas");
+    maskCanvas.width = width;
+    maskCanvas.height = height;
+    const maskCtx = maskCanvas.getContext("2d");
+    if (!maskCtx) {
+      throw new Error("We could not prepare the fit. Please try again.");
+    }
+    maskCtx.filter = `blur(${feather}px)`;
+    maskCtx.drawImage(maskImg, 0, 0, width, height);
+    maskCtx.filter = "none";
+
+    // 2. Keep only the generated pixels that fall inside the editable region.
+    const genMasked = document.createElement("canvas");
+    genMasked.width = width;
+    genMasked.height = height;
+    const genCtx = genMasked.getContext("2d");
+    if (!genCtx) {
+      throw new Error("We could not prepare the fit. Please try again.");
+    }
+    genCtx.drawImage(genImg, 0, 0, width, height);
+    genCtx.globalCompositeOperation = "destination-in";
+    genCtx.drawImage(maskCanvas, 0, 0);
+    genCtx.globalCompositeOperation = "source-over";
+
+    // 3. Start from the untouched original, then lay the edited region on top.
+    const out = document.createElement("canvas");
+    out.width = width;
+    out.height = height;
+    const outCtx = out.getContext("2d");
+    if (!outCtx) {
+      throw new Error("We could not prepare the fit. Please try again.");
+    }
+    outCtx.drawImage(baseImg, 0, 0, width, height);
+    outCtx.drawImage(genMasked, 0, 0);
+
+    return out.toDataURL("image/jpeg", 0.95);
   } catch (err) {
-    console.warn("Cleanup fallback to direct Bria image:", err);
-    return briaResultUrl;
+    console.warn("Composite failed:", err);
+    // Never fall back to the raw AI frame here: that frame is exactly where a
+    // model's face and pose can leak in. Surface the failure instead so the
+    // person is never silently altered.
+    throw new Error(
+      "We could not blend the fit onto your photo without changing your appearance. Please try again."
+    );
   }
 }
+
+// Keep unused helpers referenced so tree-shaking doesn't complain in strict setups.
+void nextId;

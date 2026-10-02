@@ -1,4 +1,10 @@
 import Reveal from "@/components/base/Reveal";
+import type { ShopperProfile } from "../types";
+
+interface FittingHeaderProps {
+  shopperProfile?: ShopperProfile | null;
+  onEditProfile?: () => void;
+}
 
 const specs = [
   { icon: "ri-stack-line", label: "1–3 pieces per pass" },
@@ -26,15 +32,49 @@ const protocol = [
   },
 ];
 
-export default function FittingHeader() {
+export default function FittingHeader({ shopperProfile, onEditProfile }: FittingHeaderProps) {
+  const genderLabel =
+    shopperProfile?.gender === "women"
+      ? "Women's Collection"
+      : shopperProfile?.gender === "men"
+      ? "Men's Collection"
+      : "Unisex & All";
+
+  const ageLabel =
+    shopperProfile?.ageGroup === "kids"
+      ? "Kids & Youth (4–15)"
+      : shopperProfile?.ageGroup === "seniors"
+      ? "Classic & Mature Elegance (50+)"
+      : "Adults & Young Adults";
+
   return (
     <section className="w-full px-4 md:px-6 lg:px-10 pb-10 md:pb-14">
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-end">
         <Reveal className="lg:col-span-7">
           <div>
-            <span className="inline-flex items-center gap-2 font-label text-xs uppercase tracking-[0.22em] text-accent-700 mb-5">
-              <i className="ri-sparkling-2-fill"></i> 03 — Virtual Fitting Room
-            </span>
+            <div className="flex flex-wrap items-center gap-3 mb-5">
+              <span className="inline-flex items-center gap-2 font-label text-xs uppercase tracking-[0.22em] text-accent-700">
+                <i className="ri-sparkling-2-fill"></i> 03 — Virtual Fitting Room
+              </span>
+
+              {shopperProfile && (
+                <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-accent-100 border border-accent-300 text-xs text-accent-900 shadow-sm">
+                  <i className="ri-user-smile-line text-accent-700"></i>
+                  <span>
+                    Styling for: <strong>{genderLabel}</strong> &bull; {ageLabel}
+                  </span>
+                  {onEditProfile && (
+                    <button
+                      type="button"
+                      onClick={onEditProfile}
+                      className="ml-1 text-[11px] font-bold text-accent-700 hover:text-accent-950 underline underline-offset-2 cursor-pointer"
+                    >
+                      Change
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
             <h1 className="font-heading font-extrabold text-[2.6rem] leading-[0.9] md:text-6xl lg:text-7xl tracking-tight text-foreground-950">
               The fitting room
               <br />
@@ -43,12 +83,11 @@ export default function FittingHeader() {
               fits <span className="text-accent-600">you.</span>
             </h1>
             <p className="mt-6 max-w-xl text-base md:text-lg text-foreground-600 leading-relaxed">
-              Upload your photo once, then build the whole outfit — a top, a bottom and a layer over
-              it, plus as many accessories as you want (or import a piece from anywhere) — and see it
-              on you side-by-side with your original photo, powered by Bria&apos;s real virtual try-on.
-              Your face, body, pose and background stay exactly the same — only the clothes change.
+              Upload your photo once, then build the whole outfit — a top, a bottom and a layer
+              over it, plus as many accessories as you want (or import a piece from anywhere) — and
+              see it on you side-by-side with your original photo. Your face, body, pose and
+              background stay exactly the same — only the clothes change.
             </p>
-
             <div className="mt-7 flex flex-wrap gap-2">
               {specs.map((spec) => (
                 <span

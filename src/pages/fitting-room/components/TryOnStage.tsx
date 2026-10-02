@@ -14,7 +14,9 @@ interface TryOnStageProps {
 }
 
 function FrameCorner({ className }: { className: string }) {
-  return <span className={`pointer-events-none absolute w-6 h-6 md:w-8 md:h-8 ${className}`}></span>;
+  return (
+    <span className={`pointer-events-none absolute w-6 h-6 md:w-8 md:h-8 ${className}`}></span>
+  );
 }
 
 export default function TryOnStage({
@@ -32,7 +34,6 @@ export default function TryOnStage({
   const busy = status === "generating";
   const label =
     count === 0 ? "your look" : count === 1 ? "your piece" : `your ${count}-piece look`;
-
   const isDone = status === "done" && Boolean(resultUrl);
 
   return (
@@ -103,7 +104,6 @@ export default function TryOnStage({
           />
         )}
 
-        {/* Viewfinder brackets */}
         <FrameCorner className="left-3 top-3 border-l-2 border-t-2 border-background-50/40 rounded-tl-lg" />
         <FrameCorner className="right-3 top-3 border-r-2 border-t-2 border-background-50/40 rounded-tr-lg" />
         <FrameCorner className="left-3 bottom-3 border-l-2 border-b-2 border-background-50/40 rounded-bl-lg" />
@@ -116,7 +116,7 @@ export default function TryOnStage({
               Fitting {label}…
             </p>
             <p className="text-xs text-background-200/60 mt-1 text-center px-6">
-              {progress || "Bria is compositing onto you"}
+              {progress || "Compositing the pieces onto you"}
             </p>
           </div>
         )}

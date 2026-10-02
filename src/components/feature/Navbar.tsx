@@ -7,6 +7,7 @@ const navLinks = [
   { label: "Shop", href: "#categories" },
   { label: "AI Stylist", href: "#ai-stylist" },
   { label: "Fitting Room", to: "/fitting-room" },
+  { label: "My Catalog", to: "/catalog" },
   { label: "Reviews", href: "#reviews" },
 ];
 

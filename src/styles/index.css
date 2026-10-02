@@ -9,6 +9,49 @@
     -webkit-text-stroke: 1.5px #f0ece1;
     color: transparent;
   }
+
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@layer components {
+  /* Intersection-observer reveal animation (used by <Reveal />) */
+  .reveal {
+    opacity: 0;
+    transform: translateY(20px);
+    transition: opacity 0.55s ease, transform 0.55s ease;
+  }
+  .reveal.reveal-in {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  /* Shimmer shine effect */
+  .shine {
+    position: relative;
+    overflow: hidden;
+  }
+  .shine::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      105deg,
+      transparent 40%,
+      rgba(255, 255, 255, 0.22) 50%,
+      transparent 60%
+    );
+    transform: translateX(-100%);
+    transition: transform 0.55s ease;
+  }
+  .shine:hover::after {
+    transform: translateX(100%);
+  }
 }
 
 html, body {
@@ -19,3 +62,8 @@ html, body {
   font-family: 'Plus Jakarta Sans', sans-serif;
   overflow-x: hidden;
 }
+
+html {
+  scroll-behavior: smooth;
+}
+

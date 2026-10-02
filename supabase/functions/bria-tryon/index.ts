@@ -10,6 +10,16 @@ interface TryOnRequestBody {
   personImage: string;
   garmentImages: string[];
   instruction?: string;
+  maskImage?: string;
+}
+
+function encodeBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
 }
 
 serve(async (req: Request) => {
@@ -19,7 +29,8 @@ serve(async (req: Request) => {
   }
 
   try {
-    const { personImage, garmentImages, maskImage, instruction }: TryOnRequestBody & { maskImage?: string } = await req.json();
+    const { personImage, garmentImages, maskImage, instruction }: TryOnRequestBody =
+      await req.json();
 
     if (!personImage || !garmentImages || garmentImages.length === 0) {
       return new Response(
@@ -78,22 +89,28 @@ serve(async (req: Request) => {
       );
     }
 
-    // If Bria returns an async job with request_id / status_url, poll for completion
+    // Depending on the endpoint, Bria hands back either a URL or raw base64.
     let resultUrl = briaData?.result_url || briaData?.image_url || briaData?.imageUrl || null;
+    let resultDataUrl = briaData?.image_base64 || briaData?.imageBase64
+      ? `data:image/png;base64,${briaData.image_base64 || briaData.imageBase64}`
+      : null;
 
-    if (!resultUrl && (briaData?.status_url || briaData?.request_id)) {
+    if (!resultUrl && !resultDataUrl && (briaData?.status_url || briaData?.request_id)) {
       const pollUrl = briaData.status_url || `https://engine.prod.bria-api.com/v1/status/${briaData.request_id}`;
       const maxAttempts = 30;
       for (let attempt = 0; attempt < maxAttempts; attempt++) {
         await new Promise((r) => setTimeout(r, 2000));
         const statusRes = await fetch(pollUrl, {
-          headers: { "api_token": BRIA_API_KEY },
+          headers: { api_token: BRIA_API_KEY },
         });
         if (statusRes.ok) {
           const statusData = await statusRes.json();
           if (statusData.status === "COMPLETED" || statusData.status === "success") {
-            resultUrl = statusData.result_url || statusData.image_url || statusData.imageUrl;
-            break;
+            resultUrl = statusData.result_url || statusData.image_url || statusData.imageUrl || null;
+            resultDataUrl = statusData.image_base64
+              ? `data:image/png;base64,${statusData.image_base64}`
+              : resultDataUrl;
+            if (resultUrl || resultDataUrl) break;
           }
           if (statusData.status === "FAILED" || statusData.status === "error") {
             throw new Error(statusData.error || "Try-on generation failed on Bria.");
@@ -102,15 +119,38 @@ serve(async (req: Request) => {
       }
     }
 
-    if (!resultUrl) {
+    if (!resultUrl && !resultDataUrl) {
       return new Response(
         JSON.stringify({ error: "No image was returned from Bria. Please try again." }),
         { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
+    // The browser has to read the pixels of this render to blend it back onto
+    // the shopper's own photo, and a cross-origin image it may not expose would
+    // cost us the whole result. So the bytes travel back inline.
+    let imageDataUrl = resultDataUrl ?? "";
+    let mime = "image/png";
+    try {
+      if (!imageDataUrl && resultUrl && /^data:/.test(resultUrl)) {
+        imageDataUrl = resultUrl;
+      } else if (!imageDataUrl && resultUrl) {
+        const imageResponse = await fetch(resultUrl);
+        if (!imageResponse.ok) {
+          throw new Error(`Could not download the render (${imageResponse.status}).`);
+        }
+        const contentType = imageResponse.headers.get("content-type") ?? "";
+        if (contentType) mime = contentType.split(";")[0];
+        const base64 = encodeBase64(new Uint8Array(await imageResponse.arrayBuffer()));
+        imageDataUrl = `data:${mime};base64,${base64}`;
+      }
+    } catch {
+      // The URL is still usable, so hand it back rather than failing the fit.
+      imageDataUrl = "";
+    }
+
     return new Response(
-      JSON.stringify({ imageUrl: resultUrl }),
+      JSON.stringify({ imageDataUrl, imageUrl: imageDataUrl ? undefined : resultUrl }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (err: unknown) {

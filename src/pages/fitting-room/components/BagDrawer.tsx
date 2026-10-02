@@ -47,7 +47,7 @@ export default function BagDrawer({
     <>
       <div
         onClick={onClose}
-        className={`fixed inset-0 z-40 bg-foreground-950/50 transition-opacity duration-400 ${
+        className={`fixed inset-0 z-40 bg-foreground-950/50 transition-opacity duration-300 ${
           open ? "opacity-100" : "opacity-0 pointer-events-none"
         }`}
       ></div>
@@ -84,7 +84,8 @@ export default function BagDrawer({
               </span>
               <p className="font-heading font-bold text-foreground-950">Your bag is empty</p>
               <p className="text-sm text-foreground-500 mt-1 max-w-[16rem]">
-                Build a look and hit &ldquo;Shop the look&rdquo; to drop every piece in here at once.
+                Build a look and hit &ldquo;Shop the look&rdquo; to drop every piece in here at
+                once.
               </p>
             </div>
           ) : (
