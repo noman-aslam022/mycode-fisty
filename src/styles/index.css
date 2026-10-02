@@ -1,0 +1,21 @@
+@import 'remixicon/fonts/remixicon.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer utilities {
+  .text-stroke-cream {
+    -webkit-text-stroke: 1.5px #f0ece1;
+    color: transparent;
+  }
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background-color: #f8f6f0;
+  color: #151816;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  overflow-x: hidden;
+}
